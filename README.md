@@ -1,11 +1,7 @@
-### 👋 Hi, I'm Frost
+👋 Hi, I'm Frost
 
-Everything in this profile is **100% AI coded**, I don't hand write the
-code myself. What I do instead is scope the problem, review what comes
-back, test it, and fix what's broken before it goes up here.
+Everything in this profile is 100% AI coded, I don't hand write the code myself. What I do instead is scope the problem, review what comes back, and test it before it's posted here.
 
-**The one rule for anything on this profile: it has to actually work.**
-AI coded doesn't mean untested, every project here has been run, clicked
-through, and checked against edge cases before it's called done.
+My standard for anything on this profile: I run it and check it works for the cases I could think to try. That said, no code, AI-written or otherwise, comes with a guarantee. If you use anything here, please review it yourself and test it in your own environment before relying on it, especially for anything important.
 
-If you find a bug anyway, open an issue, I'll get an AI to fix that too. 😂
+Found a bug? Open an issue, I'll take a look.
