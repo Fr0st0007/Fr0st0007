@@ -1,6 +1,6 @@
 ### 👋 Hi, I'm Frost
 
-Everything in this profile is **100% AI-coded**, I don't hand-write the
+Everything in this profile is **100% AI coded**, I don't hand-write the
 code myself. What I do instead is scope the problem, review what comes
 back, test it, and fix what's broken before it goes up here.
 
