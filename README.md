@@ -8,4 +8,4 @@ back, test it, and fix what's broken before it goes up here.
 AI-coded doesn't mean untested — every project here has been run, clicked
 through, and checked against edge cases before it's called done.
 
-If you find a bug anyway, open an issue — I'll get an AI to fix that too. 😄
+If you find a bug anyway, open an issue, I'll get an AI to fix that too. 😂
