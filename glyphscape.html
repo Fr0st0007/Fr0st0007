@@ -357,6 +357,36 @@
     land.sort((a, b) => filled[b] - filled[a]);
     const acc = new Float32Array(NN).fill(1);
     for (const k of land) if (down[k] >= 0) acc[down[k]] += acc[k];
+    // On flat ground two streams can run side by side to the sea. Wherever a sizeable stream has a bigger
+    // stream right next to it (not its own up/downstream), send it into that one instead.
+    const accumulate = () => {
+      const indeg = new Int32Array(NN), q = [];
+      acc.fill(1);
+      for (const k of land) if (down[k] >= 0) indeg[down[k]]++;
+      for (const k of land) if (!indeg[k]) q.push(k);
+      for (let h = 0; h < q.length; h++) { const k = q[h], d = down[k]; if (d < 0) continue; acc[d] += acc[k]; if (--indeg[d] === 0 && base[d] >= 0) q.push(d); }
+    };
+    for (let pass = 0; pass < 3; pass++) {
+      let changed = 0;
+      for (const k of land) {
+        if (acc[k] < 25) continue;
+        const i = k % N, j = (k / N) | 0;
+        let best = -1;
+        for (const [di, dj] of NB) {
+          const n = (j + dj) * N + i + di;
+          if (n === down[k] || down[n] === k || acc[n] <= acc[k] || base[n] < 0) continue;
+          if (filled[n] > filled[k] + 0.05) continue;
+          if (best < 0 || acc[n] > acc[best]) best = n;
+        }
+        if (best < 0) continue;
+        let w = best, loop = false;                       // never create a loop
+        for (let st = 0; st < 4000 && w >= 0; st++) { if (w === k) { loop = true; break; } w = down[w]; }
+        if (loop) continue;
+        down[k] = best; changed++;
+      }
+      if (!changed) break;
+      accumulate();
+    }
 
     // --- lakes: wherever the fill raised the surface noticeably
     const lake = new Float32Array(NN).fill(-1e9);
@@ -650,11 +680,14 @@
     if (bestRel < 1e8 && bl > lakeL + 0.25) { // rivers don't cut channels through lake beds
       const bank = 3 + bw * 0.6;
       if (bd < bw) {
-        h = bl - (0.45 + bw * 0.07) * (1 - (bd / bw) * (bd / bw));
+        const f = bd / bw;
+        h = bl - (0.55 + bw * 0.09) * (1 - f * f);
         wl = Math.max(wl, bl);
       } else if (bd < bw + bank) {
-        h = mix(bl + 0.35, h, smooth(0, 1, (bd - bw) / bank));
-        if (h < bl) wl = Math.max(wl, bl);
+        // the bank rises out of the water; if the land beyond is lower than the river, keep a low levee
+        // so the river never spills into stray puddles beside it
+        const t = smooth(0, 1, (bd - bw) / bank);
+        h = Math.max(mix(bl + 0.35, h, t), bl + 0.3 * (1 - t) + 0.02);
       }
     }
     // pads (flattened ground under buildings)
@@ -1099,7 +1132,7 @@
   const FONT_SIZES = [3, 4, 5, 6, 7, 8, 10, 12, 15];
   let detail = 2;
   let dpr = 1, SW = 0, SHt = 0, cw = 4, chh = 8, cols = 0, rows = 0;
-  let cellData, cellDepth, cellJit, cellEmit, cellAlb, cellNrm, cellOff;
+  let cellData, cellDepth, cellJit, cellEmit, cellAlb, cellNrm, cellOff, cellWz;
   let cellTex, atlasTex;
 
   const VS = `#version 300 es
@@ -1254,7 +1287,8 @@
     cellEmit = new Uint8Array(cols * rows);   // 1 = colour is final (sky, water, flames, lit windows)
     cellAlb = new Float32Array(cols * rows * 3);
     cellNrm = new Int8Array(cols * rows * 3);
-    cellOff = new Float32Array(cols * rows);  // how far to step toward the sun before testing shadow (sprites)
+    cellOff = new Float32Array(cols * rows);
+    cellWz = new Float32Array(cols * rows);    // exact surface height for ground cells (NaN = reconstruct from the ray)  // how far to step toward the sun before testing shadow (sprites)
   }
 
   // =====================================================================
@@ -1348,7 +1382,7 @@
     Object.assign(V, { tanHalf, fx, fy, rx, ry, fCols, scaleY, horizon, fogK: 1 / (MAXD * 0.62), night: 1 - Lt.day });
     const sunElev = Math.asin(clamp(Lt.sunE, -1, 1));
     const night = V.night, tick = Math.floor(clock * 3), wind = clock * 0.02, fogK = V.fogK;
-    const D = cellData, Z = cellDepth, J = cellJit, E = cellEmit, A = cellAlb, NR = cellNrm, OF = cellOff;
+    const D = cellData, Z = cellDepth, J = cellJit, E = cellEmit, A = cellAlb, NR = cellNrm, OF = cellOff, WZ = cellWz;
 
     const bodyPos = (az, elev) => {
       let d = az - cam.a; d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -1388,8 +1422,12 @@
             r *= Lt.r; g *= Lt.g; b *= Lt.b;
             const eye = cam.z - wl;
             const depth = Math.max(0, wl - ch.floor[k]);
-            const tw = 0.28 + 0.72 * (1 - Math.exp(-depth * 0.32));
-            r = mix(r, 22 * Lt.r, tw); g = mix(g, 86 * Lt.g, tw); b = mix(b, 112 * Lt.b, tw);
+            const tw = 0.5 + 0.5 * (1 - Math.exp(-depth * 0.55));
+            r = mix(r, 26 * Lt.r, tw); g = mix(g, 96 * Lt.g, tw); b = mix(b, 124 * Lt.b, tw);
+            if (z < 220) { // slow ripples drifting over the surface
+              const rip = 0.9 + 0.2 * vnoise(px * 0.55 + clock * 0.35, py * 0.55 - clock * 0.2);
+              r *= rip; g *= rip; b *= rip;
+            }
             const sinDep = Math.max(0, eye) / Math.hypot(eye, z);
             const fres = 0.06 + 0.75 * Math.pow(1 - clamp(sinDep * 2.5, 0, 1), 4);
             r = mix(r, Lt.hr, fres); g = mix(g, Lt.hg, fres); b = mix(b, Lt.hb, fres);
@@ -1412,7 +1450,7 @@
             for (let rr = sy; rr < ybuf; rr++) {
               const c = rr * cols + i, q = c * 3;
               A[q] = r; A[q + 1] = g; A[q + 2] = b; NR[q] = n0; NR[q + 1] = n1; NR[q + 2] = n2;
-              Z[c] = z; J[c] = jit; E[c] = 0; OF[c] = 0;
+              Z[c] = z; J[c] = jit; E[c] = 0; OF[c] = 0; WZ[c] = h;
             }
           }
           ybuf = sy;
@@ -1623,7 +1661,7 @@
           D[p] = mix(cr, Lt.hr, fog); D[p + 1] = mix(cg, Lt.hg, fog); D[p + 2] = mix(cb, Lt.hb, fog); E[idx] = 1;
         } else {
           const q = idx * 3;
-          A[q] = MC[0]; A[q + 1] = MC[1]; A[q + 2] = MC[2]; NR[q] = n0; NR[q + 1] = n1; NR[q + 2] = n2; E[idx] = 0; OF[idx] = 0;
+          A[q] = MC[0]; A[q + 1] = MC[1]; A[q + 2] = MC[2]; NR[q] = n0; NR[q + 1] = n1; NR[q + 2] = n2; E[idx] = 0; OF[idx] = 0; cellWz[idx] = NaN;
         } J[idx] = (hash2(Math.floor(wx * 3), Math.floor(wz * 3 + wy * 3)) * 255) | 0;
       }
     }
@@ -1669,7 +1707,7 @@
     cellAlb[q] = r; cellAlb[q + 1] = g; cellAlb[q + 2] = b;
     if (n) { cellNrm[q] = n[0] * 127; cellNrm[q + 1] = n[1] * 127; cellNrm[q + 2] = n[2] * 127; }
     else { cellNrm[q] = -V.fx * 90; cellNrm[q + 1] = -V.fy * 90; cellNrm[q + 2] = 90; }
-    cellEmit[c] = 0; cellOff[c] = off;
+    cellEmit[c] = 0; cellOff[c] = off; cellWz[c] = NaN;
   }
 
   function drawTrees() {
@@ -1823,7 +1861,7 @@
   // Any point (ground, wall, leaf, person) is then lit if it sits above H, with a soft edge that widens
   // with distance to whatever casts the shadow. Two grids: 1 m near the player, 5 m out to ~1.6 km.
   const SHL = [
-    { N: 320, res: 1, maxT: 160, rowsPer: 22, cur: null, work: null },
+    { N: 320, res: 1, maxT: 160, rowsPer: 16, cur: null, work: null },
     { N: 320, res: 5, maxT: 1200, rowsPer: 8, cur: null, work: null },
   ];
   const solidList = [];
@@ -1854,6 +1892,7 @@
           const v = tr.type === T_OAK ? tr.z + tr.h * (0.55 + 0.45 * Math.sqrt(1 - d * d)) : tr.type === T_PINE ? tr.z + tr.h * (0.15 + 0.85 * (1 - d)) : tr.z + tr.h;
           stamp(ci + di, cj + dj, v);
         }
+        if (tr.r) stamp(ci, cj, tr.z + tr.h * 0.7);
       }
       // buildings, walls, bridges
       for (const so of solidList) {
@@ -1876,14 +1915,18 @@
     const w = L.work, N = L.N, res = L.res, occ = w.occ, end = Math.min(N, w.row + L.rowsPer);
     const sx = w.dx / res, sy = w.dy / res, tanE = w.tanE, omax = w.omax, maxT = L.maxT;
     for (let j = w.row; j < end; j++) for (let i = 0; i < N; i++) {
-      let H = -1e9, T = 0, t = res;
+      let H = -1e9, T = 0, t = res * 0.5;
       while (t < maxT) {
         if (omax - t * tanE < H) break; // nothing further can rise above what we already have
-        const si = Math.round(i + sx * t), sj = Math.round(j + sy * t);
-        if (si < 0 || sj < 0 || si >= N || sj >= N) break;
-        const v = occ[sj * N + si] - t * tanE;
+        const fi = i + sx * t, fj = j + sy * t;
+        if (fi < 0 || fj < 0 || fi >= N - 1 || fj >= N - 1) break;
+        const i0 = fi | 0, j0 = fj | 0, ax = fi - i0, ay = fj - j0, k0 = j0 * N + i0;
+        // bilinear, but biased toward the highest corner so thin objects (trunks, posts) aren't lost
+        const o00 = occ[k0], o10 = occ[k0 + 1], o01 = occ[k0 + N], o11 = occ[k0 + N + 1];
+        const bil = (o00 * (1 - ax) + o10 * ax) * (1 - ay) + (o01 * (1 - ax) + o11 * ax) * ay;
+        const v = Math.max(bil, Math.max(o00, o10, o01, o11) - 1.5) - t * tanE;
         if (v > H) { H = v; T = t; }
-        t += Math.max(res, t * 0.05);
+        t += t < 24 * res ? res * 0.5 : Math.max(res, t * 0.05);
       }
       w.H[j * N + i] = H; w.T[j * N + i] = T;
     }
@@ -1905,19 +1948,22 @@
     let lit = 1, inFine = false;
     const F = SHL[0].cur;
     if (F) {
-      const N = SHL[0].N, i = Math.round(x - F.x0), j = Math.round(y - F.y0);
-      if (i > 1 && j > 1 && i < N - 2 && j < N - 2) {
+      const N = SHL[0].N, fi = x - F.x0, fj = y - F.y0;
+      if (fi > 1 && fj > 1 && fi < N - 2 && fj < N - 2) {
         inFine = true;
-        const k = j * N + i, pen = 0.15 + F.T[k] * 0.022;
-        lit = clamp((z - F.H[k] + 0.3) / pen + 0.5, 0, 1);
+        const i0 = fi | 0, j0 = fj | 0, ax = fi - i0, ay = fj - j0, k = j0 * N + i0, Hm = F.H;
+        const H = (Hm[k] * (1 - ax) + Hm[k + 1] * ax) * (1 - ay) + (Hm[k + N] * (1 - ax) + Hm[k + N + 1] * ax) * ay;
+        const T = Math.max(F.T[k], F.T[k + 1], F.T[k + N], F.T[k + N + 1]);
+        lit = clamp((z - H + 0.2) / (0.2 + T * 0.02) + 0.5, 0, 1);
       }
     }
     const C = SHL[1].cur;
     if (C) {
-      const N = SHL[1].N, i = Math.round((x - C.x0) / 5), j = Math.round((y - C.y0) / 5);
-      if (i > 0 && j > 0 && i < N - 1 && j < N - 1) {
-        const k = j * N + i, T = C.T[k];
-        if (!inFine || T > 70) lit = Math.min(lit, clamp((z - C.H[k] + 3) / (1.5 + T * 0.02) + 0.5, 0, 1));
+      const N = SHL[1].N, fi = (x - C.x0) / 5, fj = (y - C.y0) / 5;
+      if (fi > 0 && fj > 0 && fi < N - 1 && fj < N - 1) {
+        const i0 = fi | 0, j0 = fj | 0, ax = fi - i0, ay = fj - j0, k = j0 * N + i0, Hm = C.H, T = C.T[k];
+        const H = (Hm[k] * (1 - ax) + Hm[k + 1] * ax) * (1 - ay) + (Hm[k + N] * (1 - ax) + Hm[k + N + 1] * ax) * ay;
+        if (!inFine || T > 70) lit = Math.min(lit, clamp((z - H + 3) / (1.5 + T * 0.02) + 0.5, 0, 1));
       }
     }
     return lit;
@@ -1945,7 +1991,7 @@
     }
     const nL = lights.length;
     const { fx, fy, rx, ry, fCols, scaleY, horizon, fogK } = V;
-    const D = cellData, Z = cellDepth, E = cellEmit, A = cellAlb, NR = cellNrm, OF = cellOff;
+    const D = cellData, Z = cellDepth, E = cellEmit, A = cellAlb, NR = cellNrm, OF = cellOff, WZ = cellWz;
     const sunOn = up + mu > 0.001;
     for (let r = 0; r < rows; r++) {
       const hgt = -(r + 0.5 - horizon) / scaleY;
@@ -1954,7 +2000,7 @@
         if (E[idx]) continue;
         const z = Z[idx], q = idx * 3, p = idx * 4;
         const s = (c + 0.5 - cols / 2) / fCols;
-        const wx = cam.x + (fx + rx * s) * z, wy = cam.y + (fy + ry * s) * z, wz = cam.z + hgt * z;
+        const wx = cam.x + (fx + rx * s) * z, wy = cam.y + (fy + ry * s) * z, wzk = WZ[idx], wz = wzk === wzk ? wzk : cam.z + hgt * z;
         const nx = NR[q] / 127, ny = NR[q + 1] / 127, nz = NR[q + 2] / 127;
         const hz = nz * 0.5 + 0.5;
         let lr = gr + (skr - gr) * hz, lg = gg + (skg - gg) * hz, lb = gb + (skb - gb) * hz;
@@ -2420,7 +2466,7 @@
   }
   window.claude?.hot?.snapshot?.(() => ({ seed, cam: { ...cam }, tod, detail }));
   addEventListener("resize", buildCells);
-  window.glyphscape = { cam, get W() { return W; }, get seed() { return seed; }, sampleTerrain, TS0, setTod: t => (tod = t), ms: 0 };
+  window.glyphscape = { dbg: () => ({ shadowAt, treeAt, floorAt, Lt, SHL, TSP }), cam, get W() { return W; }, get seed() { return seed; }, sampleTerrain, TS0, setTod: t => (tod = t), ms: 0 };
 
   const boot = () => (window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {}));
   Promise.race([
