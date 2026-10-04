@@ -763,8 +763,15 @@
     FI_CH = ch;
     return (iy - ch.y0) * CS + (ix - ch.x0);
   }
+  let FA_CH = null, FA_CX = 1e9, FA_CY = 1e9;
   function floorAt(x, y) {
     const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+    const cx = Math.floor(ix / CS), cy = Math.floor(iy / CS), lx = ix - cx * CS, ly = iy - cy * CS;
+    if (lx < CS - 1 && ly < CS - 1) { // fast path: all four samples in one (cached) chunk
+      if (cx !== FA_CX || cy !== FA_CY) { FA_CH = chunkAt(0, cx, cy); FA_CX = cx; FA_CY = cy; }
+      const f = FA_CH.floor, k = ly * CS + lx;
+      return mix(mix(f[k], f[k + 1], fx), mix(f[k + CS], f[k + CS + 1], fx), fy);
+    }
     let k = fineIdx(ix, iy); const a = FI_CH.floor[k];
     k = fineIdx(ix + 1, iy); const b = FI_CH.floor[k];
     k = fineIdx(ix, iy + 1); const c = FI_CH.floor[k];
@@ -1083,7 +1090,7 @@
   if (!gl) { document.getElementById("nogl").hidden = false; document.getElementById("loading").hidden = true; return; }
 
   const RAMP = " .`',:;-~=+*!ixo%#&8@";
-  const FONT_SIZES = [5, 6, 7, 8, 10, 12, 15];
+  const FONT_SIZES = [3, 4, 5, 6, 7, 8, 10, 12, 15];
   let detail = 2;
   let dpr = 1, SW = 0, SHt = 0, cw = 4, chh = 8, cols = 0, rows = 0;
   let cellData, cellDepth, cellJit, cellEmit;
@@ -1190,7 +1197,7 @@
     document.getElementById("loading").hidden = false;
     setTimeout(() => {
       setSeed(s ?? (Math.random() * 1e9) | 0);
-      LODS.forEach(L => L.map.clear());
+      LODS.forEach(L => L.map.clear()); FA_CX = FA_CY = 1e9;
       generateWorld();
       placeStart();
       maps.forEach(m => { m.det = null; m.work = null; });
@@ -1245,6 +1252,7 @@
     try { localStorage.setItem("glyphscape-settings", JSON.stringify(settings)); } catch (e) { /* storage unavailable */ }
   }
   applySettings();
+  detail = clamp(settings.detail ?? 2, 0, FONT_SIZES.length - 1); // remembered character size
   const V = {}; // per-frame view parameters shared by the passes
 
   function render() {
@@ -1329,10 +1337,10 @@
           let r = mix(Lt.hr, Lt.zr, tz), g = mix(Lt.hg, Lt.zg, tz), b = mix(Lt.hb, Lt.zb, tz);
           const inv = 1 / (e + 0.05);
           const cu = ca * inv * 0.7 + wind, cv = sa * inv * 0.7 - wind * 0.3;
-          const cn = e > 0.005 ? fbm(cu, cv, 5) : 0;
+          const cn = e > 0.005 ? fbm(cu, cv, 4) : 0;
           const amt = smooth(0.52, 0.68, cn) * smooth(0.015, 0.14, e);
           if (amt > 0.01) {
-            const lit = clamp(0.9 + (cn - fbm(cu + 0.05, cv + 0.05, 3)) * 7, 0.62, 1.12);
+            const lit = clamp(0.9 + (cn - fbm(cu + 0.05, cv + 0.05, 2)) * 7, 0.62, 1.12);
             const cl = mix(0.2, 1, Lt.day) * lit;
             r = mix(r, 250 * cl + Lt.dusk * 40, amt * 0.92);
             g = mix(g, 248 * cl, amt * 0.92);
@@ -1846,7 +1854,7 @@
     btnLetters.setAttribute("aria-pressed", String(!!lettersTarget));
     btnLetters.lastChild.textContent = lettersTarget ? "Hide letters" : "Show letters";
   }
-  function changeDetail(d) { const nd = clamp(detail + d, 0, FONT_SIZES.length - 1); if (nd !== detail) { detail = nd; buildCells(); } }
+  function changeDetail(d) { const nd = clamp(detail + d, 0, FONT_SIZES.length - 1); if (nd !== detail) { detail = nd; settings.detail = nd; applySettings(); buildCells(); } }
   function toggleMap() { bigWrap.hidden = !bigWrap.hidden; if (!bigWrap.hidden && document.pointerLockElement) document.exitPointerLock(); }
   function zoomMap(f, which) { const m = maps[which ?? (bigWrap.hidden ? 0 : 1)]; m.target = clamp(m.target * f, MIN_SCALE, MAX_SCALE); }
   // ---- time of day: panel + Minecraft-style /time commands
