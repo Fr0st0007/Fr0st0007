@@ -1,167 +1,97 @@
 <title>Glyphscape</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Major+Mono+Display&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cascadia+Code:wght@400;600&family=Major+Mono+Display&display=swap">
 <style>
-  /* Layout: full-bleed text-mode canvas; a thin HUD floats over it, brand top-left, keycap controls along the bottom. */
+  /* Layout: full-bleed WebGL character grid; HUD floats over it. Brand top-left, map top-right, keycaps along the bottom. */
   :root {
-    --void: #05070d;          /* letterbox / page ground */
-    --ink: #eef0f5;           /* HUD text */
-    --ink-dim: #a3abbd;       /* HUD secondary text */
+    --void: #05070d;
+    --ink: #eef0f5;
+    --ink-dim: #a3abbd;
     --panel: rgba(6, 9, 18, 0.62);
     --edge: rgba(238, 240, 245, 0.16);
-    --sun: #ffcf6e;           /* accent, borrowed from the in-world sun */
-    --font-display: "Major Mono Display", "IBM Plex Mono", ui-monospace, monospace;
-    --font-ui: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sun: #ffcf6e;
+    --font-display: "Major Mono Display", "Cascadia Code", "Cascadia Mono", ui-monospace, monospace;
+    --font-ui: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, SFMono-Regular, Menlo, monospace;
     color-scheme: dark;
   }
+  [hidden] { display: none !important; }
   html, body { height: 100%; overflow: hidden; }
   body { background: var(--void); color: var(--ink); font-family: var(--font-ui); }
-  #view {
-    position: fixed; inset: 0; width: 100%; height: 100%;
-    display: block; touch-action: none; cursor: grab;
-  }
-  #view:active { cursor: grabbing; }
-  .hud {
-    position: fixed; left: 0; right: 0; pointer-events: none;
-    padding-inline: max(16px, env(safe-area-inset-left, 0px));
-  }
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+  .hud { position: fixed; left: 0; right: 0; pointer-events: none; padding-inline: max(16px, env(safe-area-inset-left, 0px)); }
   .hud > * { pointer-events: auto; }
-  .top { top: 0; padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
-  .bottom {
-    bottom: 0; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-    display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end;
-  }
-  .brand {
-    display: inline-flex; flex-direction: column; gap: 4px;
-    background: var(--panel); border: 1px solid var(--edge);
-    padding: 10px 14px; border-radius: 4px; backdrop-filter: blur(6px);
-    max-width: 100%;
-  }
-  .brand h1 {
-    margin: 0; font-family: var(--font-display); font-weight: 400;
-    font-size: 22px; letter-spacing: 0.04em; line-height: 1.1;
-  }
+  .top { top: 0; padding-top: calc(14px + env(safe-area-inset-top, 0px)); display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+  .bottom { bottom: 0; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 4px; backdrop-filter: blur(6px); }
+  .brand { display: inline-flex; flex-direction: column; gap: 4px; padding: 10px 14px; min-width: 0; max-width: 100%; }
+  .brand h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 22px; letter-spacing: 0.04em; line-height: 1.1; }
   .brand h1 span { color: var(--sun); }
-  .readout {
-    font-size: 12px; color: var(--ink-dim);
-    font-variant-numeric: tabular-nums; white-space: pre-wrap;
-  }
+  .readout { font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; white-space: pre-wrap; }
   .readout b { color: var(--ink); font-weight: 600; }
-  button {
-    font: 600 12px/1 var(--font-ui); color: var(--ink);
-    background: var(--panel); border: 1px solid var(--edge); border-radius: 4px;
-    padding: 9px 11px; cursor: pointer; backdrop-filter: blur(6px);
-    display: inline-flex; gap: 8px; align-items: center;
-  }
+  .mini { padding: 6px; display: flex; flex-direction: column; gap: 4px; align-items: center; flex: none; }
+  .mini canvas { width: 132px; height: 132px; image-rendering: pixelated; display: block; border-radius: 2px; }
+  .mini small { font-size: 10px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  button { font: 600 12px/1 var(--font-ui); color: var(--ink); background: var(--panel); border: 1px solid var(--edge); border-radius: 4px; padding: 9px 11px; cursor: pointer; backdrop-filter: blur(6px); display: inline-flex; gap: 8px; align-items: center; }
   button:hover { border-color: var(--sun); }
   button:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
   button[aria-pressed="true"] { border-color: var(--sun); color: var(--sun); }
-  kbd {
-    font: 600 10px/1 var(--font-ui); color: var(--void); background: var(--ink-dim);
-    border-radius: 2px; padding: 3px 5px;
-  }
+  kbd { font: 600 10px/1 var(--font-ui); color: var(--void); background: var(--ink-dim); border-radius: 2px; padding: 3px 5px; }
   button[aria-pressed="true"] kbd { background: var(--sun); }
-  .hint {
-    font-size: 11px; color: var(--ink-dim); margin-left: auto;
-    background: var(--panel); border: 1px solid var(--edge); border-radius: 4px;
-    padding: 8px 10px; max-width: 100%;
-  }
-  @media (max-width: 640px) {
-    .hint { display: none; }
-    .brand h1 { font-size: 18px; }
-  }
+  .hint { font-size: 11px; color: var(--ink-dim); margin-left: auto; padding: 8px 10px; max-width: 100%; }
+  #bigmap { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(5, 7, 13, 0.55); padding: 16px; }
+  #bigmap .frame { padding: 10px; display: flex; flex-direction: column; gap: 8px; max-width: 100%; }
+  #bigmap canvas { width: min(78vh, calc(100vw - 52px)); height: min(78vh, calc(100vw - 52px)); image-rendering: pixelated; display: block; }
+  #bigmap .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; font-size: 12px; color: var(--ink-dim); }
+  #jump { display: none; position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(110px + env(safe-area-inset-bottom, 0px)); padding: 16px 18px; }
+  @media (pointer: coarse) { #jump { display: inline-flex; } }
+  @media (max-width: 700px) { .hint { display: none; } .brand h1 { font-size: 18px; } .mini canvas { width: 96px; height: 96px; } }
+  #nogl { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; }
 </style>
 
 <canvas id="view" aria-label="Procedurally generated landscape drawn with text characters"></canvas>
 
 <div class="hud top">
-  <div class="brand">
+  <div class="brand panel">
     <h1>glyph<span>s</span>cape</h1>
     <div class="readout" id="readout">generating world…</div>
+  </div>
+  <div class="mini panel">
+    <canvas id="minimap" width="96" height="96"></canvas>
+    <small id="miniScale">1 char = 4 m</small>
   </div>
 </div>
 
 <div class="hud bottom">
-  <button id="btnLetters" aria-pressed="false"><kbd>L</kbd>Show letters</button>
-  <button id="btnAuto" aria-pressed="true"><kbd>F</kbd>Autopilot</button>
-  <button id="btnNew"><kbd>R</kbd>New world</button>
-  <button id="btnTime"><kbd>T</kbd>Skip time</button>
-  <button id="btnLess" aria-label="Bigger characters"><kbd>−</kbd>Chunkier</button>
-  <button id="btnMore" aria-label="Smaller characters"><kbd>+</kbd>Finer</button>
-  <div class="hint">WASD / arrows move &amp; turn · Q/E or Space/C fly up/down · Shift boost · drag to look</div>
+  <button id="btnLetters" aria-pressed="false"><kbd>L</kbd><span>Show letters</span></button>
+  <button id="btnFly" aria-pressed="false"><kbd>F</kbd><span>Fly</span></button>
+  <button id="btnMap"><kbd>M</kbd><span>Map</span></button>
+  <button id="btnTime"><kbd>T</kbd><span>Skip time</span></button>
+  <button id="btnNew"><kbd>R</kbd><span>New world</span></button>
+  <button id="btnLess" aria-label="Bigger characters"><kbd>−</kbd><span>Chunkier</span></button>
+  <button id="btnMore" aria-label="Smaller characters"><kbd>+</kbd><span>Finer</span></button>
+  <div class="hint panel">Click to look · WASD move · Space jump · Shift run · [ ] map zoom · Esc frees mouse</div>
 </div>
+<button id="jump" class="panel">Jump</button>
+
+<div id="bigmap" hidden>
+  <div class="frame panel">
+    <canvas id="mapcanvas" width="200" height="200"></canvas>
+    <div class="row"><span id="mapScale">1 char = 16 m</span><span>[ ] or scroll to zoom · M to close</span></div>
+  </div>
+</div>
+
+<div id="nogl" hidden>This needs WebGL 2, which your browser or device has turned off.</div>
 
 <script>
 (() => {
   "use strict";
 
-  // ---------- canvas & character grid ----------
-  const view = document.getElementById("view");
-  const ctx = view.getContext("2d");
-  const readout = document.getElementById("readout");
-
-  // Every glyph the world is allowed to be made of. Index 0 is "nothing drawn".
-  const GLYPHS = " .,'`\":;-~=+*^#%&@oO0≈▒";
-  const G = {};
-  [...GLYPHS].forEach((g, i) => (G[g] = i));
-  const SET = {
-    grass:  [",", "'", "\"", ";", ".", "`"].map(g => G[g]),
-    forest: ["&", "%", "@", "#", "&"].map(g => G[g]),
-    rock:   ["#", "=", "+", "^", "%"].map(g => G[g]),
-    snow:   ["*", ".", "'", "+", "`"].map(g => G[g]),
-    sand:   [".", ":", ",", "`", "."].map(g => G[g]),
-    water:  ["~", "-", "≈", "~", "=", "-"].map(g => G[g]),
-    cloud:  ["~", "-", "=", "~"].map(g => G[g]),
-    star:   [".", "+", "*", "."].map(g => G[g]),
-  };
-  const SUN_GLYPH = G["@"], MOON_GLYPH = G["O"];
-
-  const FONT_SIZES = [7, 8, 10, 12, 15, 19];
-  let detail = innerWidth < 640 ? 2 : 2;
-  let dpr = 1, W = 0, H = 0, cw = 6, chh = 10, cols = 0, rows = 0;
-  let atlas, bgCan, bgCtx, bgImg, fgCan, fgCtx, fgImg, glyphCan, glyphCtx;
-  let cellCol, cellGlyph;
-
-  function buildGrid() {
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    W = Math.floor(innerWidth * dpr);
-    H = Math.floor(innerHeight * dpr);
-    view.width = W; view.height = H;
-
-    const fs = FONT_SIZES[detail] * dpr;
-    const font = `${fs}px "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace`;
-    ctx.font = font;
-    cw = Math.max(3, Math.ceil(ctx.measureText("M").width));
-    chh = Math.max(5, Math.ceil(fs * 1.18));
-    cols = Math.ceil(W / cw);
-    rows = Math.ceil(H / chh);
-
-    // Glyph atlas: each character in white, one cell wide.
-    atlas = document.createElement("canvas");
-    atlas.width = cw * GLYPHS.length; atlas.height = chh;
-    const a = atlas.getContext("2d");
-    a.font = font; a.fillStyle = "#fff"; a.textBaseline = "middle"; a.textAlign = "center";
-    [...GLYPHS].forEach((g, i) => { if (i) a.fillText(g, i * cw + cw / 2, chh / 2 + dpr * 0.5); });
-
-    // One pixel per cell for the background and glyph colours.
-    bgCan = document.createElement("canvas"); bgCan.width = cols; bgCan.height = rows;
-    fgCan = document.createElement("canvas"); fgCan.width = cols; fgCan.height = rows;
-    bgCtx = bgCan.getContext("2d"); fgCtx = fgCan.getContext("2d");
-    bgImg = bgCtx.createImageData(cols, rows);
-    fgImg = fgCtx.createImageData(cols, rows);
-    glyphCan = document.createElement("canvas");
-    glyphCan.width = cols * cw; glyphCan.height = rows * chh;
-    glyphCtx = glyphCan.getContext("2d");
-
-    cellCol = new Float32Array(cols * rows * 3);
-    cellGlyph = new Uint8Array(cols * rows);
-  }
-
-  // ---------- seeded noise ----------
+  // =====================================================================
+  //  Noise
+  // =====================================================================
   let seed = 0, seedMix = 0;
   function setSeed(s) { seed = s >>> 0; seedMix = Math.imul(seed ^ 0x5bd1e995, 0x9E3779B1) | 0; }
-
   function hash2(x, y) {
     let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + seedMix) | 0;
     h = Math.imul(h ^ (h >>> 13), 1274126177);
@@ -175,7 +105,6 @@
     const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
     return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
   }
-  // fbm with a rotation between octaves so the lattice never shows.
   function fbm(x, y, oct) {
     let sum = 0, amp = 0.5, norm = 0;
     for (let i = 0; i < oct; i++) {
@@ -197,135 +126,338 @@
   }
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+  const mix = (a, b, t) => a + (b - a) * t;
 
-  // ---------- terrain ----------
-  const WATER = 27;
+  // =====================================================================
+  //  Terrain: one continent per seed, plus islands and rivers. Units are metres, sea level is 0.
+  // =====================================================================
+  const R = 3400; // rough continent radius
   function terrainH(x, y) {
-    const c = fbm(x * 0.0016, y * 0.0016, 5);
-    const r = ridged(x * 0.0042 + 31.7, y * 0.0042 - 12.3, 5);
-    const d = fbm(x * 0.021 + 5, y * 0.021 + 9, 3);
-    const mount = smooth(0.46, 0.74, c);
-    return (c * 1.3 - 0.2) * 70 + mount * r * 105 + (d - 0.5) * 7;
+    const wx = x + (fbm(x * 0.0004 + 7, y * 0.0004, 3) - 0.5) * 2600;
+    const wy = y + (fbm(x * 0.0004, y * 0.0004 - 3, 3) - 0.5) * 2600;
+    const d = Math.hypot(wx, wy) / R;
+    const c = fbm(x * 0.0011, y * 0.0011, 5);
+    const isl = fbm(x * 0.0021 + 40, y * 0.0021 + 40, 4);
+    let land = (c - 0.5) + 0.36 * (1 - smooth(0.45, 1.05, d)) - 0.07 - 0.2 * smooth(1.3, 2.1, d);
+    land = Math.max(land, ((isl - 0.64) * 1.4) * (1 - smooth(1.5, 2.2, d)));
+
+    let h = land * 150;
+    if (land > 0) {
+      const mount = smooth(0.1, 0.3, land);
+      if (mount > 0) h += mount * Math.pow(ridged(x * 0.0019 + 31.7, y * 0.0019 - 12.3, 5), 1.4) * 180;
+      h += (fbm(x * 0.012 + 5, y * 0.012 + 9, 3) - 0.5) * 7 * smooth(0, 6, h);
+
+      // Rivers: thin bands where a low-frequency noise crosses 0.5 carve channels down below sea level.
+      const strength = smooth(0.4, 3, h) * (1 - smooth(55, 95, h));
+      if (strength > 0) {
+        const rv = Math.abs(fbm(x * 0.0009 + 50, y * 0.0009 - 80, 4) - 0.5);
+        const w = 0.0065;
+        if (rv < w * 6) {
+          const valley = 1 - smooth(w, w * 6, rv);
+          h = mix(h, h * 0.45 + 1.2, valley * strength);
+          const chan = 1 - smooth(w * 0.45, w, rv);
+          h = mix(h, -1.8 - (1 - rv / w) * 1.2, chan * strength);
+        }
+      }
+    }
+    return h;
+  }
+  const moisture = (x, y) => fbm(x * 0.0017 + 100, y * 0.0017 - 50, 3);
+
+  // Biomes. Writes rgb into out[0..2] and returns a kind id.
+  const K = { WATER: 0, SAND: 1, GRASS: 2, FOREST: 3, PINE: 4, ROCK: 5, SNOW: 6 };
+  function classify(h, steep, m, rnd, out) {
+    let r, g, b, kind;
+    if (h < 0) { // sea or river bed
+      const t = clamp(-h / 30, 0, 1);
+      r = 170 - 90 * t; g = 156 - 70 * t; b = 112 - 40 * t; kind = K.WATER;
+    } else if (h < 1.8) { r = 214; g = 198; b = 146; kind = K.SAND; }
+    else if (h > 165 - m * 30 + (rnd - 0.5) * 8) { r = 236; g = 240; b = 248; kind = K.SNOW; }
+    else if (h > 120 + m * 10 || steep > 2.4) {
+      const t = rnd * 0.2; r = 118 + 30 * t; g = 112 + 25 * t; b = 106 + 20 * t; kind = K.ROCK;
+    } else if (m > 0.52 && h < 110) {
+      const pine = h > 60 || m > 0.63;
+      r = pine ? 52 : 70; g = pine ? 84 : 104; b = pine ? 48 : 44; kind = pine ? K.PINE : K.FOREST;
+    } else {
+      const dry = clamp((0.52 - m) * 4, 0, 1);
+      r = 80 + 80 * dry; g = 150 - 8 * dry; b = 62 - 12 * dry; kind = K.GRASS;
+    }
+    out[0] = r; out[1] = g; out[2] = b;
+    return kind;
   }
 
-  const K = { WATER: 0, SAND: 1, GRASS: 2, FOREST: 3, ROCK: 4, SNOW: 5 };
+  // =====================================================================
+  //  Chunk cache. Fine chunks are 1 m per sample (near), coarse are 4 m (far).
+  // =====================================================================
   const CS = 128;
-  const chunks = new Map();
+  const LODS = [{ step: 1, map: new Map() }, { step: 4, map: new Map() }];
+  const tmp = [0, 0, 0];
 
-  function genChunk(cx, cy) {
+  function genChunk(cx, cy, step, coarse) {
     const x0 = cx * CS, y0 = cy * CS, N = CS + 1;
     const hh = new Float32Array(N * N);
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) hh[j * N + i] = terrainH(x0 + i - 1, y0 + j - 1);
-
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) hh[j * N + i] = terrainH((x0 + i - 1) * step, (y0 + j - 1) * step);
     const n = CS * CS;
-    const ch = { h: new Float32Array(n), col: new Uint8Array(n * 3), glyph: new Uint8Array(n), kind: new Uint8Array(n), x0, y0 };
+    const ch = { x0, y0, h: new Float32Array(n), floor: new Float32Array(n), col: new Uint8Array(n * 3), kind: new Uint8Array(n), jit: new Uint8Array(n) };
     for (let j = 0; j < CS; j++) {
       for (let i = 0; i < CS; i++) {
-        const k = j * CS + i, wx = x0 + i, wy = y0 + j;
-        let h = hh[(j + 1) * N + i + 1];
-        const sx = h - hh[(j + 1) * N + i], sy = h - hh[j * N + i + 1];
+        const k = j * CS + i, gx = x0 + i, gy = y0 + j;
+        const h = hh[(j + 1) * N + i + 1];
+        const sx = (h - hh[(j + 1) * N + i]) / step, sy = (h - hh[j * N + i + 1]) / step;
         const steep = Math.abs(sx) + Math.abs(sy);
-        let shade = clamp(1 + (sx + sy) * 0.075, 0.45, 1.4);
-        const m = fbm(wx * 0.0042 + 100, wy * 0.0042 - 50, 3);
-        const rnd = hash2(wx, wy), rnd2 = hash2(wy + 7, wx - 3);
-        let r, g, b, kind, set;
-
-        if (h < WATER) {
-          const depth = WATER - h;
-          const t = clamp(depth / 22, 0, 1);
-          r = 40 - 30 * t; g = 130 - 80 * t; b = 170 - 60 * t;
-          shade = 0.95 + rnd * 0.1; kind = K.WATER; set = SET.water; h = WATER;
-        } else if (h < WATER + 2.2) {
-          r = 214; g = 196; b = 140; kind = K.SAND; set = SET.sand;
-        } else if (h > 118 - m * 14 + (rnd - 0.5) * 6) {
-          r = 236; g = 240; b = 248; kind = K.SNOW; set = SET.snow;
-        } else if (h > 90 + m * 6 || steep > 3.4) {
-          const t = rnd * 0.15;
-          r = 120 + 30 * t; g = 112 + 25 * t; b = 104 + 20 * t; kind = K.ROCK; set = SET.rock;
-        } else if (m > 0.53 && h < 86) {
-          kind = K.FOREST; set = SET.forest;
-          if (rnd < 0.5) { // tree crowns stick up out of the canopy
-            h += 2.5 + rnd2 * 4.5;
-            shade = 0.75 + rnd2 * 0.5;
-            r = 30 + 20 * rnd2; g = 92 + 40 * rnd2; b = 40;
-          } else { r = 26; g = 70; b = 34; shade *= 0.8; }
-        } else {
-          const dry = clamp((0.53 - m) * 4, 0, 1);
-          r = 70 + 90 * dry; g = 150 - 10 * dry; b = 60 - 10 * dry;
-          kind = K.GRASS; set = SET.grass;
-        }
-        const v = 0.93 + rnd2 * 0.14;
-        ch.h[k] = h;
-        ch.col[k * 3] = clamp(r * shade * v, 0, 255);
-        ch.col[k * 3 + 1] = clamp(g * shade * v, 0, 255);
-        ch.col[k * 3 + 2] = clamp(b * shade * v, 0, 255);
-        ch.glyph[k] = set[(rnd * 997 | 0) % set.length];
+        const rnd = hash2(gx * step, gy * step), rnd2 = hash2(gy * step + 7, gx * step - 3);
+        const kind = classify(h, steep, moisture(gx * step, gy * step), rnd, tmp);
+        // light comes from the sun's side (-x, -y)
+        let shade = kind === K.WATER ? 1 : clamp(1 + (sx + sy) * 0.55, 0.5, 1.45);
+        let top = h;
+        if (coarse && (kind === K.FOREST || kind === K.PINE)) { top += 6 + rnd2 * 8; shade *= 0.72 + rnd2 * 0.3; }
+        const v = 0.92 + rnd2 * 0.16;
+        ch.h[k] = Math.max(top, 0);
+        ch.floor[k] = h;
+        ch.col[k * 3] = clamp(tmp[0] * shade * v, 0, 255);
+        ch.col[k * 3 + 1] = clamp(tmp[1] * shade * v, 0, 255);
+        ch.col[k * 3 + 2] = clamp(tmp[2] * shade * v, 0, 255);
         ch.kind[k] = kind;
+        ch.jit[k] = (rnd * 255) | 0;
       }
     }
     return ch;
   }
-
-  function getChunk(cx, cy) {
-    const key = cx * 65536 + cy;
-    let ch = chunks.get(key);
-    if (!ch) { ch = genChunk(cx, cy); chunks.set(key, ch); }
+  function chunkAt(lod, cx, cy) {
+    const L = LODS[lod], key = cx * 65536 + cy;
+    let ch = L.map.get(key);
+    if (!ch) { ch = genChunk(cx, cy, L.step, lod === 1); L.map.set(key, ch); }
     return ch;
   }
   function pruneChunks() {
-    if (chunks.size < 260) return;
-    const pcx = Math.floor(cam.x / CS), pcy = Math.floor(cam.y / CS);
-    for (const [key, ch] of chunks) {
-      const cx = Math.floor(ch.x0 / CS), cy = Math.floor(ch.y0 / CS);
-      if (Math.abs(cx - pcx) > 7 || Math.abs(cy - pcy) > 7) chunks.delete(key);
+    for (let lod = 0; lod < 2; lod++) {
+      const L = LODS[lod], keep = lod ? 5 : 6;
+      if (L.map.size < (lod ? 90 : 140)) continue;
+      const pcx = Math.floor(cam.x / L.step / CS), pcy = Math.floor(cam.y / L.step / CS);
+      for (const [key, ch] of L.map) {
+        if (Math.abs(ch.x0 / CS - pcx) > keep || Math.abs(ch.y0 / CS - pcy) > keep) L.map.delete(key);
+      }
     }
   }
-  function groundAt(x, y) {
-    const xi = Math.floor(x), yi = Math.floor(y);
-    const ch = getChunk(Math.floor(xi / CS), Math.floor(yi / CS));
-    return ch.h[(yi - ch.y0) * CS + (xi - ch.x0)];
+  // Fine-grid lookups.
+  function fineIdx(ix, iy) {
+    const ch = chunkAt(0, Math.floor(ix / CS), Math.floor(iy / CS));
+    fineIdx.ch = ch;
+    return (iy - ch.y0) * CS + (ix - ch.x0);
+  }
+  function floorAt(x, y) { // smooth ground height (river/sea bed included)
+    const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+    let k = fineIdx(ix, iy); const a = fineIdx.ch.floor[k];
+    k = fineIdx(ix + 1, iy); const b = fineIdx.ch.floor[k];
+    k = fineIdx(ix, iy + 1); const c = fineIdx.ch.floor[k];
+    k = fineIdx(ix + 1, iy + 1); const d = fineIdx.ch.floor[k];
+    return mix(mix(a, b, fx), mix(c, d, fx), fy);
+  }
+  function kindAt(x, y) { const k = fineIdx(Math.floor(x), Math.floor(y)); return fineIdx.ch.kind[k]; }
+
+  // =====================================================================
+  //  Trees & bushes: placed on a jittered lattice; they have collision and are drawn as 3D sprites.
+  // =====================================================================
+  const TS = 5;
+  const T_OAK = 1, T_PINE = 2, T_BUSH = 3;
+  const treeOut = { x: 0, y: 0, z: 0, type: 0, h: 0, w: 0, r: 0, seed: 0 };
+  function treeAt(i, j) {
+    const r1 = hash2(i * 3 + 1, j * 7 - 2), r2 = hash2(i * 11 - 5, j * 3 + 8), r3 = hash2(i - 9, j + 13);
+    const x = (i + 0.15 + 0.7 * r1) * TS, y = (j + 0.15 + 0.7 * r2) * TS;
+    const kind = kindAt(x, y);
+    let type = 0;
+    if (kind === K.FOREST) type = r3 < 0.55 ? T_OAK : r3 < 0.62 ? T_PINE : r3 < 0.8 ? T_BUSH : 0;
+    else if (kind === K.PINE) type = r3 < 0.6 ? T_PINE : r3 < 0.7 ? T_BUSH : 0;
+    else if (kind === K.GRASS) type = r3 < 0.025 ? T_OAK : r3 < 0.1 ? T_BUSH : 0;
+    if (!type) return null;
+    const z = floorAt(x, y);
+    if (z < 0.4) return null;
+    const v = hash2(j * 5 + 3, i * 13 - 1);
+    treeOut.x = x; treeOut.y = y; treeOut.z = z; treeOut.type = type; treeOut.seed = v;
+    if (type === T_OAK) { treeOut.h = 7 + v * 5; treeOut.w = treeOut.h * 0.85; treeOut.r = 0.45; }
+    else if (type === T_PINE) { treeOut.h = 10 + v * 8; treeOut.w = treeOut.h * 0.42; treeOut.r = 0.35; }
+    else { treeOut.h = 0.8 + v * 0.8; treeOut.w = treeOut.h * 1.9; treeOut.r = 0; }
+    return treeOut;
   }
 
-  // ---------- camera & world state ----------
-  const cam = { x: 0, y: 0, z: 80, a: 0.6, pitch: 0 };
-  let tod = 0.34;           // time of day, 0..1 (0.5 = noon)
-  let autopilot = !matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let letters = 0, lettersTarget = 0;
-  let clock = 0;
+  // =====================================================================
+  //  Grid + WebGL
+  // =====================================================================
+  const view = document.getElementById("view");
+  const gl = view.getContext("webgl2", { antialias: false, alpha: false });
+  if (!gl) { document.getElementById("nogl").hidden = false; return; }
 
+  // Glyphs ordered from emptiest to densest; each cell picks one by its brightness.
+  const RAMP = " .`',:;-~=+*!ixo%#&8@";
+  const FONT_SIZES = [5, 6, 7, 8, 10, 12, 15];
+  let detail = 2;
+  let dpr = 1, W = 0, H = 0, cw = 4, chh = 8, cols = 0, rows = 0;
+  let cellData, cellDepth, cellJit;
+  let cellTex, atlasTex;
+
+  const VS = `#version 300 es
+  in vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }`;
+  const FS = `#version 300 es
+  precision highp float;
+  uniform sampler2D uCells, uAtlas;
+  uniform vec2 uCell, uRes;
+  uniform float uGlyphs, uReveal;
+  out vec4 o;
+  void main(){
+    vec2 p = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y);
+    vec2 cell = floor(p / uCell);
+    vec2 f = (p - cell * uCell) / uCell;
+    vec4 d = texelFetch(uCells, ivec2(cell), 0);
+    float g = floor(d.a * 255. + .5);
+    float m = texture(uAtlas, vec2((g + f.x) / uGlyphs, f.y)).a;
+    vec3 c = d.rgb;
+    vec3 bg = c * mix(.92, .05, uReveal);
+    vec3 fg = min(c * mix(1.07, 1.4, uReveal) + mix(.01, .05, uReveal), 1.);
+    o = vec4(mix(bg, fg, m), 1.);
+  }`;
+  function shader(type, src) {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const aP = gl.getAttribLocation(prog, "p");
+  gl.enableVertexAttribArray(aP);
+  gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
+  const U = n => gl.getUniformLocation(prog, n);
+  const uCells = U("uCells"), uAtlas = U("uAtlas"), uCell = U("uCell"), uRes = U("uRes"), uGlyphs = U("uGlyphs"), uReveal = U("uReveal");
+
+  function makeTex() {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+
+  function buildGrid() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.floor(innerWidth * dpr); H = Math.floor(innerHeight * dpr);
+    view.width = W; view.height = H;
+    gl.viewport(0, 0, W, H);
+
+    const fs = FONT_SIZES[detail] * dpr;
+    const font = `${fs}px "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, Menlo, monospace`;
+    const a = document.createElement("canvas").getContext("2d");
+    a.font = font;
+    cw = Math.max(2, Math.round(a.measureText("M").width));
+    chh = Math.max(4, Math.round(fs * 1.2));
+    cols = Math.ceil(W / cw); rows = Math.ceil(H / chh);
+
+    a.canvas.width = cw * RAMP.length; a.canvas.height = chh;
+    a.font = font; a.fillStyle = "#fff"; a.textBaseline = "middle"; a.textAlign = "center";
+    [...RAMP].forEach((g, i) => { if (i) a.fillText(g, i * cw + cw / 2, chh / 2 + dpr * 0.5); });
+
+    if (!atlasTex) { atlasTex = makeTex(); cellTex = makeTex(); }
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, atlasTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, a.canvas);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, cellTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cols, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+    gl.uniform1i(uCells, 0); gl.uniform1i(uAtlas, 1);
+    gl.uniform2f(uCell, cw, chh); gl.uniform2f(uRes, W, H); gl.uniform1f(uGlyphs, RAMP.length);
+
+    cellData = new Uint8Array(cols * rows * 4);
+    cellDepth = new Float32Array(cols * rows);
+    cellJit = new Uint8Array(cols * rows);
+  }
+
+  // =====================================================================
+  //  Player / camera
+  // =====================================================================
+  const EYE = 1.7;
+  const cam = { x: 0, y: 0, z: 10, a: 0.6, pitch: 0, vz: 0, fly: false, grounded: false, swimming: false };
+  let tod = 0.36;
+  let letters = 0, lettersTarget = 0, clock = 0, mainland = 0;
+
+  function findStart() {
+    // Walk outward from the middle of the continent until we find dry, gentle ground near some trees.
+    for (let i = 0; i < 400; i++) {
+      const ang = i * 2.399, rad = 40 + i * 9;
+      const x = Math.cos(ang) * rad, y = Math.sin(ang) * rad;
+      const h = terrainH(x, y);
+      if (h < 4 || h > 45) continue;
+      const slope = Math.abs(terrainH(x + 3, y) - h) + Math.abs(terrainH(x, y + 3) - h);
+      if (slope > 1.5) continue;
+      const m = moisture(x, y);
+      if (m > 0.45 && m < 0.56) return { x, y };
+    }
+    return { x: 0, y: 0 };
+  }
+  function measureMainland() {
+    // Flood fill the land connected to the continent centre on a coarse grid.
+    const N = 140, span = R * 4.4, step = span / N;
+    const land = new Uint8Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) land[j * N + i] = terrainH((i - N / 2) * step, (j - N / 2) * step) > 0 ? 1 : 0;
+    let start = -1;
+    for (let r = 0; r < N / 2 && start < 0; r++) {
+      for (let a = 0; a < 16; a++) {
+        const i = (N / 2 + Math.round(Math.cos(a / 16 * 6.283) * r)), j = (N / 2 + Math.round(Math.sin(a / 16 * 6.283) * r));
+        if (land[j * N + i]) { start = j * N + i; break; }
+      }
+    }
+    if (start < 0) return 0;
+    const stack = [start]; land[start] = 2; let count = 0;
+    while (stack.length) {
+      const k = stack.pop(); count++;
+      const i = k % N, j = (k / N) | 0;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ni = i + di, nj = j + dj;
+        if (ni < 0 || nj < 0 || ni >= N || nj >= N) continue;
+        const nk = nj * N + ni;
+        if (land[nk] === 1) { land[nk] = 2; stack.push(nk); }
+      }
+    }
+    return count * step * step / 1e6; // km²
+  }
   function newWorld(s) {
     setSeed(s ?? (Math.random() * 1e9) | 0);
-    chunks.clear();
-    // Start on the nearest coastline-ish spot we can find so the first view has land and sea.
-    let best = { x: 0, y: 0, score: -1 };
-    for (let i = 0; i < 60; i++) {
-      const x = (hash2(i, 1) - 0.5) * 4000, y = (hash2(1, i) - 0.5) * 4000;
-      const h = terrainH(x, y);
-      const score = h > WATER + 4 && h < 70 ? 1 / (1 + Math.abs(h - 45)) : 0;
-      if (score > best.score) best = { x, y, score };
-    }
-    cam.x = best.x; cam.y = best.y;
-    cam.z = groundAt(cam.x, cam.y) + 34;
+    LODS.forEach(L => L.map.clear());
+    const p = findStart();
+    cam.x = p.x; cam.y = p.y; cam.vz = 0;
+    cam.z = Math.max(floorAt(cam.x, cam.y), 0) + EYE;
+    mainland = measureMainland();
+    mapDirty = true;
   }
 
-  // ---------- lighting ----------
-  const mix = (a, b, t) => a + (b - a) * t;
-  const L = { r: 1, g: 1, b: 1, zr: 0, zg: 0, zb: 0, hr: 0, hg: 0, hb: 0, sunE: 0, day: 1 };
+  // =====================================================================
+  //  Lighting
+  // =====================================================================
+  const SUN_AZ = Math.atan2(-1, -1);
+  const Lt = { r: 1, g: 1, b: 1, zr: 0, zg: 0, zb: 0, hr: 0, hg: 0, hb: 0, sunE: 0, day: 1, dusk: 0 };
   function updateLight() {
     const sunE = Math.sin((tod - 0.25) * Math.PI * 2);
-    const day = smooth(-0.18, 0.32, sunE);
+    const day = smooth(-0.18, 0.3, sunE);
     const dusk = Math.exp(-Math.pow(sunE / 0.2, 2));
-    L.sunE = sunE; L.day = day;
-    L.r = mix(0.16, 1.0, day) + dusk * 0.32;
-    L.g = mix(0.2, 1.0, day) + dusk * 0.08;
-    L.b = mix(0.36, 1.0, day) - dusk * 0.12;
-    L.zr = mix(3, 52, day); L.zg = mix(5, 112, day); L.zb = mix(18, 205, day);
-    L.hr = mix(14, 168, day) + dusk * 95; L.hg = mix(18, 204, day) + dusk * 10; L.hb = mix(40, 236, day) - dusk * 70;
+    Object.assign(Lt, {
+      sunE, day, dusk,
+      r: mix(0.12, 1.0, day) + dusk * 0.3, g: mix(0.15, 1.0, day) + dusk * 0.06, b: mix(0.3, 1.0, day) - dusk * 0.12,
+      zr: mix(3, 40, day), zg: mix(5, 96, day), zb: mix(20, 200, day),
+      hr: mix(12, 165, day) + dusk * 95, hg: mix(16, 200, day) + dusk * 8, hb: mix(38, 232, day) - dusk * 70,
+    });
   }
 
-  // ---------- renderer ----------
-  const MAXD = 760;
-  const FOV = 1.15;
+  // =====================================================================
+  //  Renderer (CPU ray march per column -> cell buffer -> one GPU draw)
+  // =====================================================================
+  const FOV = 1.2;
+  const MAXD = 1700, FINE_D = 380, SPRITE_D = 360, NEAR_D = 45;
 
   function render() {
     const tanHalf = Math.tan(FOV / 2);
@@ -333,140 +465,293 @@
     const rx = -fy, ry = fx;
     const fCols = (cols / 2) / tanHalf;
     const scaleY = fCols * cw / chh;
-    const horizon = rows * 0.42 + cam.pitch * rows;
-    const waterTick = Math.floor(clock * 2.2);
+    const horizon = rows * 0.5 + cam.pitch * rows;
+    const eyeAboveSea = cam.z;
+    const sunElev = Math.asin(clamp(Lt.sunE, -1, 1));
+    const night = 1 - Lt.day;
+    const tick = Math.floor(clock * 3);
+    const wind = clock * 0.02;
+    const fogK = 1 / 1100;
+    const D = cellData, Z = cellDepth, J = cellJit;
 
-    // sun / moon screen positions
-    const sunAz = 0.9;
     const bodyPos = (az, elev) => {
       let d = az - cam.a; d = Math.atan2(Math.sin(d), Math.cos(d));
-      if (Math.abs(d) > 1.3 || elev < -0.1) return null;
+      if (Math.abs(d) > 1.3 || elev < -0.12) return null;
       return { c: cols / 2 + Math.tan(d) * fCols, r: horizon - Math.tan(Math.asin(clamp(elev, -1, 1))) * scaleY };
     };
-    const sun = bodyPos(sunAz, L.sunE);
-    const moon = bodyPos(sunAz + Math.PI, -L.sunE);
-    const sunR = 2.6 * chh, moonR = 1.8 * chh;
-    const wind = clock * 0.03;
+    const sun = bodyPos(SUN_AZ, Lt.sunE), moon = bodyPos(SUN_AZ + Math.PI, -Lt.sunE);
+    const sunR = 2.2 * chh * (FONT_SIZES[2] / FONT_SIZES[detail]) ** 0.5 * 2.2, moonR = sunR * 0.7;
 
     for (let i = 0; i < cols; i++) {
       const t = ((i + 0.5) / cols) * 2 - 1;
       const dx = fx + rx * t * tanHalf, dy = fy + ry * t * tanHalf;
-      let ybuf = rows, z = 1.2, dz = 0.4;
-      let lastCx = 1e9, lastCy = 1e9, ch = null;
+      const colAng = cam.a + Math.atan(t * tanHalf);
+      let sunDiff = colAng - SUN_AZ; sunDiff = Math.atan2(Math.sin(sunDiff), Math.cos(sunDiff));
+      const glintCol = Math.exp(-(sunDiff * sunDiff) / 0.012) * Lt.day * (1 + Lt.dusk);
+      let ybuf = rows, z = 0.25, dz = 0.04;
+      let lcx = 1e9, lcy = 1e9, lod = -1, ch = null;
 
       while (z < MAXD && ybuf > 0) {
-        const wx = Math.floor(cam.x + dx * z), wy = Math.floor(cam.y + dy * z);
-        const cx = Math.floor(wx / CS), cy = Math.floor(wy / CS);
-        if (cx !== lastCx || cy !== lastCy) { ch = getChunk(cx, cy); lastCx = cx; lastCy = cy; }
-        const k = (wy - ch.y0) * CS + (wx - ch.x0);
-        const h = ch.h[k];
+        const px = cam.x + dx * z, py = cam.y + dy * z;
+        const nl = z < FINE_D ? 0 : 1, step = nl ? 4 : 1;
+        const gx = Math.floor(px / step), gy = Math.floor(py / step);
+        const cx = Math.floor(gx / CS), cy = Math.floor(gy / CS);
+        if (nl !== lod || cx !== lcx || cy !== lcy) { ch = chunkAt(nl, cx, cy); lcx = cx; lcy = cy; lod = nl; }
+        const k = (gy - ch.y0) * CS + (gx - ch.x0);
+        let h = ch.h[k];
+        if (z < NEAR_D) h = Math.max(floorAt(px, py), 0); // smooth ground up close
         let sy = Math.floor((cam.z - h) * scaleY / z + horizon);
         if (sy < ybuf) {
           if (sy < 0) sy = 0;
-          const fog = Math.pow(z / MAXD, 1.35);
-          let r = ch.col[k * 3] * L.r, g = ch.col[k * 3 + 1] * L.g, b = ch.col[k * 3 + 2] * L.b;
-          let glyph = ch.glyph[k];
+          const raw0 = ch.col[k * 3], raw1 = ch.col[k * 3 + 1], raw2 = ch.col[k * 3 + 2];
+          let r = raw0 * Lt.r, g = raw1 * Lt.g, b = raw2 * Lt.b;
           if (ch.kind[k] === K.WATER) {
-            glyph = SET.water[(glyph + waterTick + ((wx * 7 + wy * 13) >> 3)) % SET.water.length];
-            // a little sky in the water
-            r = mix(r, L.hr * 0.6, 0.25); g = mix(g, L.hg * 0.6, 0.25); b = mix(b, L.hb * 0.7, 0.25);
+            // see-through water: bed colour fades into water colour with depth, sky reflects at grazing angles
+            const depth = Math.max(0, -ch.floor[k]);
+            const tw = 1 - Math.exp(-depth * 0.28);
+            r = mix(r, 18 * Lt.r, tw); g = mix(g, 74 * Lt.g, tw); b = mix(b, 96 * Lt.b, tw);
+            const sinDep = eyeAboveSea / Math.hypot(eyeAboveSea, z);
+            const fres = 0.06 + 0.8 * Math.pow(1 - clamp(sinDep * 2.5, 0, 1), 4);
+            r = mix(r, Lt.hr, fres); g = mix(g, Lt.hg, fres); b = mix(b, Lt.hb, fres);
+            // sunlight reflecting off a rough surface: a column below the sun, sparkling
+            if (glintCol > 0.01) {
+              const dep = Math.atan2(eyeAboveSea, z);
+              const gl2 = glintCol * Math.exp(-Math.pow((dep - sunElev) / 0.16, 2));
+              const sparkle = hash2(Math.floor(px * 1.5) + tick * 131, Math.floor(py * 1.5)) > 0.6 ? 1.7 : 0.5;
+              const s = gl2 * sparkle;
+              r += 255 * s; g += (225 - Lt.dusk * 60) * s; b += (170 - Lt.dusk * 90) * s;
+            }
           }
-          r = mix(r, L.hr, fog); g = mix(g, L.hg, fog); b = mix(b, L.hb, fog);
+          if (night > 0.05 && z < 16) { // lantern
+            const tl = night * (1 - z / 16) ** 2;
+            r += raw0 * tl * 0.9 + 25 * tl; g += raw1 * tl * 0.6 + 12 * tl; b += raw2 * tl * 0.3;
+          }
+          const fog = 1 - Math.exp(-z * fogK);
+          r = mix(r, Lt.hr, fog); g = mix(g, Lt.hg, fog); b = mix(b, Lt.hb, fog);
+          const jit = ch.jit[k];
           for (let rr = sy; rr < ybuf; rr++) {
-            const c = rr * cols + i;
-            cellCol[c * 3] = r; cellCol[c * 3 + 1] = g; cellCol[c * 3 + 2] = b;
-            cellGlyph[c] = fog > 0.85 ? 0 : glyph;
+            const c = rr * cols + i, p = c * 4;
+            D[p] = r > 255 ? 255 : r; D[p + 1] = g > 255 ? 255 : g; D[p + 2] = b > 255 ? 255 : b;
+            Z[c] = z; J[c] = jit;
           }
           ybuf = sy;
         }
         z += dz;
-        dz = 0.4 + z * 0.011;
+        dz = 0.03 + z * (z < FINE_D ? 0.0075 : 0.011);
       }
 
-      // Sky for whatever is left above the terrain in this column.
+      // sky
       if (ybuf > 0) {
-        const colAng = cam.a + Math.atan(t * tanHalf);
         const ca = Math.cos(colAng), sa = Math.sin(colAng);
         for (let rr = 0; rr < ybuf; rr++) {
-          const c = rr * cols + i;
-          const e = Math.max(0, (horizon - rr) / scaleY);       // tan(elevation)
-          const tz = clamp(e * 1.5, 0, 1);
-          let r = mix(L.hr, L.zr, tz), g = mix(L.hg, L.zg, tz), b = mix(L.hb, L.zb, tz);
-          let glyph = 0;
-
-          // clouds on a flat ceiling
-          const inv = 1 / (e + 0.06);
-          const cn = fbm(ca * inv * 0.9 + wind, sa * inv * 0.9 - wind * 0.4, 4);
-          const amt = smooth(0.54, 0.74, cn) * smooth(0.02, 0.18, e);
-          if (amt > 0.02) {
-            const cl = mix(0.22, 1, L.day);
-            r = mix(r, 245 * cl + (L.hr - 168) * 0.3, amt * 0.85);
-            g = mix(g, 245 * cl, amt * 0.85);
-            b = mix(b, 250 * cl, amt * 0.85);
-            if (amt > 0.3) glyph = SET.cloud[(hash2(i >> 1, rr) * 4) | 0];
-          } else if (L.day < 0.5) {
-            // stars, pinned to the sky by direction
-            const sh = hash2(Math.floor(colAng * 160), Math.floor(e * 160));
-            if (sh > 0.985) {
-              const tw = 0.6 + 0.4 * Math.sin(clock * 3 + sh * 80);
-              const s = (1 - L.day * 2) * tw * 230;
+          const c = rr * cols + i, p = c * 4;
+          const e = Math.max(0, (horizon - rr) / scaleY);
+          const tz = clamp(e * 1.4, 0, 1);
+          let r = mix(Lt.hr, Lt.zr, tz), g = mix(Lt.hg, Lt.zg, tz), b = mix(Lt.hb, Lt.zb, tz);
+          const inv = 1 / (e + 0.05);
+          const cu = ca * inv * 0.7 + wind, cv = sa * inv * 0.7 - wind * 0.3;
+          const cn = fbm(cu, cv, 5);
+          const amt = smooth(0.52, 0.68, cn) * smooth(0.015, 0.14, e);
+          if (amt > 0.01) {
+            const lit = clamp(0.9 + (cn - fbm(cu + 0.05, cv + 0.05, 3)) * 7, 0.62, 1.12); // puffy shading: brighter on the sun side
+            const cl = mix(0.2, 1, Lt.day) * lit;
+            r = mix(r, 250 * cl + Lt.dusk * 40, amt * 0.92);
+            g = mix(g, 248 * cl, amt * 0.92);
+            b = mix(b, 252 * cl - Lt.dusk * 30, amt * 0.92);
+          } else if (night > 0.5) {
+            const sh = hash2(Math.floor(colAng * 300), Math.floor(Math.atan(e) * 300));
+            if (sh > 0.992) {
+              const s = (night - 0.5) * 2 * (0.6 + 0.4 * Math.sin(clock * 3 + sh * 90)) * 220;
               r = Math.max(r, s); g = Math.max(g, s); b = Math.max(b, s * 1.05);
-              glyph = SET.star[(sh * 1000 | 0) % 4];
             }
           }
           if (sun) {
             const d = Math.hypot((i - sun.c) * cw, (rr - sun.r) * chh);
-            const glow = Math.exp(-d / (sunR * 3.5)) * 0.55 * (0.4 + L.day);
-            r += 255 * glow; g += 200 * glow; b += 120 * glow;
-            if (d < sunR) { r = 255; g = 236; b = 170; glyph = SUN_GLYPH; }
+            const glow = Math.exp(-d / (sunR * 3)) * 0.5 * (0.4 + Lt.day);
+            r += 255 * glow; g += 205 * glow; b += 130 * glow;
+            if (d < sunR) { r = 255; g = 240; b = 190; }
           }
           if (moon) {
             const d = Math.hypot((i - moon.c) * cw, (rr - moon.r) * chh);
-            if (d < moonR) { const m = 1 - L.day; r = mix(r, 220, m); g = mix(g, 226, m); b = mix(b, 240, m); glyph = MOON_GLYPH; }
+            if (d < moonR) { r = mix(r, 225, night); g = mix(g, 230, night); b = mix(b, 245, night); }
           }
-          cellCol[c * 3] = r; cellCol[c * 3 + 1] = g; cellCol[c * 3 + 2] = b;
-          cellGlyph[c] = glyph;
+          D[p] = r > 255 ? 255 : r; D[p + 1] = g > 255 ? 255 : g; D[p + 2] = b > 255 ? 255 : b;
+          Z[c] = 1e9; J[c] = (hash2(i, rr) * 255) | 0;
         }
       }
     }
 
-    // Compose: background colour per cell, then the glyph tinted in a brighter version of it.
-    // With letters hidden the two are close, so characters read as texture; revealed, the ground goes dark.
-    const bgK = mix(0.8, 0.07, letters), fgK = mix(1.22, 1.3 + (1 - L.day) * 1.4, letters), lift = mix(10, 30, letters);
-    const bd = bgImg.data, fd = fgImg.data, n = cols * rows;
+    drawSprites(fx, fy, rx, ry, fCols, scaleY, horizon, tanHalf, fogK, night);
+
+    // brightness -> glyph
+    const n = cols * rows, NG = RAMP.length;
     for (let c = 0; c < n; c++) {
-      const r = cellCol[c * 3], g = cellCol[c * 3 + 1], b = cellCol[c * 3 + 2], p = c * 4;
-      bd[p] = r * bgK; bd[p + 1] = g * bgK; bd[p + 2] = b * bgK; bd[p + 3] = 255;
-      fd[p] = r * fgK + lift; fd[p + 1] = g * fgK + lift; fd[p + 2] = b * fgK + lift; fd[p + 3] = 255;
+      const p = c * 4;
+      const lum = (D[p] * 0.3 + D[p + 1] * 0.59 + D[p + 2] * 0.11) / 255;
+      let gi = Math.floor(lum * (NG - 1) + ((J[c] & 7) - 3.5) * 0.6);
+      D[p + 3] = gi < 1 ? 1 : gi >= NG ? NG - 1 : gi;
     }
-    bgCtx.putImageData(bgImg, 0, 0);
-    fgCtx.putImageData(fgImg, 0, 0);
-
-    const gw = cols * cw, gh = rows * chh;
-    glyphCtx.globalCompositeOperation = "source-over";
-    glyphCtx.clearRect(0, 0, gw, gh);
-    for (let r = 0; r < rows; r++) {
-      const y = r * chh, base = r * cols;
-      for (let i = 0; i < cols; i++) {
-        const g = cellGlyph[base + i];
-        if (g) glyphCtx.drawImage(atlas, g * cw, 0, cw, chh, i * cw, y, cw, chh);
-      }
-    }
-    glyphCtx.globalCompositeOperation = "source-in";
-    glyphCtx.imageSmoothingEnabled = false;
-    glyphCtx.drawImage(fgCan, 0, 0, gw, gh);
-
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(bgCan, 0, 0, gw, gh);
-    ctx.drawImage(glyphCan, 0, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, cellTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, D);
+    gl.uniform1f(uReveal, letters);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
-  // ---------- input ----------
-  const keys = new Set();
-  const btnLetters = document.getElementById("btnLetters");
-  const btnAuto = document.getElementById("btnAuto");
+  function drawSprites(fx, fy, rx, ry, fCols, scaleY, horizon, tanHalf, fogK, night) {
+    const D = cellData, Z = cellDepth, J = cellJit;
+    const R2 = SPRITE_D / TS;
+    const ci = Math.floor(cam.x / TS), cj = Math.floor(cam.y / TS);
+    const margin = tanHalf * 1.1;
+    for (let j = cj - R2; j <= cj + R2; j++) {
+      for (let i = ci - R2; i <= ci + R2; i++) {
+        // cheap frustum test on the lattice cell centre first
+        const ox = (i + 0.5) * TS - cam.x, oy = (j + 0.5) * TS - cam.y;
+        const zc = ox * fx + oy * fy;
+        if (zc < -TS || zc > SPRITE_D) continue;
+        const sc = ox * rx + oy * ry;
+        if (Math.abs(sc) > zc * margin + TS * 2 + 12) continue;
+        const tr = treeAt(i, j);
+        if (!tr) continue;
+        const ddx = tr.x - cam.x, ddy = tr.y - cam.y;
+        const z = ddx * fx + ddy * fy;
+        if (z < 0.3) continue;
+        const s = ddx * rx + ddy * ry;
+        const colC = cols / 2 + (s / z) * fCols;
+        const halfW = (tr.w / 2 / z) * fCols;
+        const base = horizon + (cam.z - tr.z) * scaleY / z;
+        const top = horizon + (cam.z - tr.z - tr.h) * scaleY / z;
+        const hgt = base - top;
+        if (hgt < 0.6 || colC + halfW < 0 || colC - halfW > cols) continue;
+        const c0 = Math.max(0, Math.floor(colC - halfW)), c1 = Math.min(cols - 1, Math.ceil(colC + halfW));
+        const r0 = Math.max(0, Math.floor(top)), r1 = Math.min(rows - 1, Math.ceil(base));
+        const fog = 1 - Math.exp(-z * fogK);
+        const lantern = night > 0.05 && z < 16 ? night * (1 - z / 16) ** 2 : 0;
+        const sd = tr.seed, type = tr.type;
+        const tint = 0.85 + sd * 0.3;
+        // deciduous crown: a few overlapping blobs
+        const bx1 = -0.28 + sd * 0.1, by1 = 0.62, bx2 = 0.3 - sd * 0.12, by2 = 0.6 + sd * 0.08, bx3 = 0.02, by3 = 0.8;
+        for (let rr = r0; rr <= r1; rr++) {
+          const v = (base - (rr + 0.5)) / hgt; // 0 at the ground, 1 at the top
+          if (v < 0 || v > 1) continue;
+          for (let cc = c0; cc <= c1; cc++) {
+            const c = rr * cols + cc;
+            if (Z[c] <= z) continue;
+            const u = (cc + 0.5 - colC) / halfW; // -1..1
+            let r = -1, g = 0, b = 0;
+            const qn = hash2(Math.floor(u * 9 + sd * 50), Math.floor(v * 12 + sd * 70)); // leafy edges
+            if (type === T_OAK) {
+              const ua = u, va = v * (tr.h / tr.w) * 1.0; // correct for aspect
+              const d1 = Math.hypot(ua - bx1, (v - by1) * 1.25), d2 = Math.hypot(ua - bx2, (v - by2) * 1.25), d3 = Math.hypot(ua - bx3, (v - by3) * 1.4);
+              const edge = 0.36 + (qn - 0.5) * 0.09;
+              const inCrown = d1 < edge || d2 < edge * 0.95 || d3 < edge * 0.9;
+              if (inCrown && v > 0.38) {
+                const lit = clamp(0.7 + (v - 0.6) * 0.9 - u * 0.25 + (qn - 0.5) * 0.3, 0.35, 1.25);
+                r = 92 * lit * tint; g = 150 * lit; b = 58 * lit;
+              } else {
+                const trunkW = 0.075 + (v < 0.12 ? (0.12 - v) * 0.5 : 0);
+                const branch = v > 0.35 && v < 0.6 && Math.abs(Math.abs(u) - (v - 0.35) * 1.2) < 0.05;
+                if ((Math.abs(u) < trunkW && v < 0.6) || branch) {
+                  const lit = u < 0 ? 1.05 : 0.75;
+                  r = 108 * lit; g = 70 * lit; b = 44 * lit;
+                }
+              }
+              void va;
+            } else if (type === T_PINE) {
+              if (v < 0.16) {
+                if (Math.abs(u) < 0.1) { const lit = u < 0 ? 1 : 0.7; r = 92 * lit; g = 62 * lit; b = 40 * lit; }
+              } else {
+                const tier = (v * 6) % 1;
+                const wdt = (1 - v) * (0.85 + 0.25 * (1 - tier)) + (qn - 0.5) * 0.08;
+                if (Math.abs(u) < wdt) {
+                  const lit = clamp(0.62 + (1 - tier) * 0.3 - u * 0.25 + (qn - 0.5) * 0.25, 0.3, 1.1);
+                  r = 40 * lit * tint; g = 92 * lit; b = 56 * lit;
+                }
+              }
+            } else {
+              const d = Math.hypot(u, (v - 0.5) * 1.9);
+              if (d < 0.95 + (qn - 0.5) * 0.25) {
+                const lit = clamp(0.6 + v * 0.5 - u * 0.2 + (qn - 0.5) * 0.3, 0.35, 1.2);
+                r = 76 * lit * tint; g = 128 * lit; b = 52 * lit;
+              }
+            }
+            if (r < 0) continue;
+            const raw0 = r, raw1 = g, raw2 = b;
+            r *= Lt.r; g *= Lt.g; b *= Lt.b;
+            if (lantern) { r += raw0 * lantern * 0.9 + 25 * lantern; g += raw1 * lantern * 0.6 + 12 * lantern; b += raw2 * lantern * 0.3; }
+            r = mix(r, Lt.hr, fog); g = mix(g, Lt.hg, fog); b = mix(b, Lt.hb, fog);
+            const p = c * 4;
+            D[p] = r > 255 ? 255 : r; D[p + 1] = g > 255 ? 255 : g; D[p + 2] = b > 255 ? 255 : b;
+            Z[c] = z; J[c] = (qn * 255) | 0;
+          }
+        }
+      }
+    }
+  }
 
-  function setAuto(on) { autopilot = on; btnAuto.setAttribute("aria-pressed", String(on)); }
+  // =====================================================================
+  //  Maps
+  // =====================================================================
+  const MAP_ZOOMS = [1, 2, 4, 8, 16, 32, 64];
+  let miniZoom = 2, bigZoom = 4, mapDirty = true;
+  const mini = document.getElementById("minimap"), miniCtx = mini.getContext("2d");
+  const big = document.getElementById("mapcanvas"), bigCtx = big.getContext("2d");
+  const bigWrap = document.getElementById("bigmap");
+  const maps = [
+    { can: mini, ctx: miniCtx, N: 96, zoom: () => MAP_ZOOMS[miniZoom], img: miniCtx.createImageData(96, 96), row: 0, cx: 0, cy: 0, buf: null },
+    { can: big, ctx: bigCtx, N: 200, zoom: () => MAP_ZOOMS[bigZoom], img: bigCtx.createImageData(200, 200), row: 0, cx: 0, cy: 0, buf: null },
+  ];
+  function mapPixel(x, y, s, out) {
+    const h = terrainH(x, y), hn = terrainH(x - s, y - s);
+    const sl = (h - hn) / s;
+    const kind = classify(h, Math.abs(sl) * 1.4, moisture(x, y), hash2(x | 0, y | 0), out);
+    if (kind === K.WATER) {
+      const t = 1 - Math.exp(-(-h) * 0.12);
+      out[0] = mix(70, 22, t); out[1] = mix(150, 70, t); out[2] = mix(175, 120, t);
+    } else {
+      const shade = clamp(1 + sl * 1.5, 0.55, 1.4);
+      out[0] *= shade; out[1] *= shade; out[2] *= shade;
+    }
+  }
+  // Maps redraw a few rows per frame so a large map never stalls a frame.
+  function updateMap(m, rowsPerFrame) {
+    const N = m.N, s = m.zoom(), d = m.img.data;
+    if (m.row === 0) { m.cx = Math.round(cam.x / s) * s; m.cy = Math.round(cam.y / s) * s; }
+    const end = Math.min(N, m.row + rowsPerFrame);
+    for (let j = m.row; j < end; j++) {
+      for (let i = 0; i < N; i++) {
+        mapPixel(m.cx + (i - N / 2) * s, m.cy + (j - N / 2) * s, s, tmp);
+        const p = (j * N + i) * 4;
+        d[p] = tmp[0]; d[p + 1] = tmp[1]; d[p + 2] = tmp[2]; d[p + 3] = 255;
+      }
+    }
+    m.row = end >= N ? 0 : end;
+    if (m.row === 0 || !m.buf) {
+      if (!m.buf) { m.buf = document.createElement("canvas"); m.buf.width = N; m.buf.height = N; }
+      m.buf.getContext("2d").putImageData(m.img, 0, 0);
+    }
+  }
+  function drawMap(m) {
+    const N = m.N, s = m.zoom(), c = m.ctx;
+    if (m.buf) c.drawImage(m.buf, 0, 0);
+    // player marker and facing arrow
+    const px = N / 2 + (cam.x - m.cx) / s, py = N / 2 + (cam.y - m.cy) / s;
+    const a = cam.a, L = N < 150 ? 8 : 6;
+    c.save();
+    c.translate(px, py); c.rotate(a);
+    c.fillStyle = "#ffcf6e"; c.strokeStyle = "#05070d"; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(L, 0); c.lineTo(-L * 0.6, L * 0.55); c.lineTo(-L * 0.25, 0); c.lineTo(-L * 0.6, -L * 0.55); c.closePath();
+    c.fill(); c.stroke();
+    c.restore();
+  }
+  const fmtScale = s => `1 char = ${s} m · ${(s * 96 / 1000).toFixed(s < 4 ? 2 : 1)} km across`;
+
+  // =====================================================================
+  //  Input
+  // =====================================================================
+  const keys = new Set();
+  const btnLetters = document.getElementById("btnLetters"), btnFly = document.getElementById("btnFly");
+  function setFly(on) { cam.fly = on; cam.vz = 0; btnFly.setAttribute("aria-pressed", String(on)); }
   function toggleLetters() {
     lettersTarget = lettersTarget ? 0 : 1;
     btnLetters.setAttribute("aria-pressed", String(!!lettersTarget));
@@ -476,82 +761,132 @@
     const nd = clamp(detail + d, 0, FONT_SIZES.length - 1);
     if (nd !== detail) { detail = nd; buildGrid(); }
   }
-  const MOVE_KEYS = new Set(["w", "a", "s", "d", "q", "e", " ", "c", "arrowup", "arrowdown", "arrowleft", "arrowright"]);
+  function toggleMap() { bigWrap.hidden = !bigWrap.hidden; maps[1].row = 0; if (!bigWrap.hidden && document.pointerLockElement) document.exitPointerLock(); }
+  function zoomMap(d) {
+    if (!bigWrap.hidden) { bigZoom = clamp(bigZoom + d, 0, MAP_ZOOMS.length - 1); maps[1].row = 0; }
+    else { miniZoom = clamp(miniZoom + d, 0, MAP_ZOOMS.length - 1); maps[0].row = 0; }
+  }
+  const skipTime = () => (tod = (tod + 0.125) % 1);
 
   addEventListener("keydown", ev => {
     if (ev.target.closest && ev.target.closest("button") && (ev.key === " " || ev.key === "Enter")) return;
     const k = ev.key.toLowerCase();
-    if (MOVE_KEYS.has(k)) { keys.add(k); setAuto(false); ev.preventDefault(); }
-    else if (k === "shift") keys.add(k);
+    if (["w", "a", "s", "d", " ", "c", "q", "e", "shift", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) { keys.add(k); ev.preventDefault(); }
     else if (k === "l") toggleLetters();
-    else if (k === "f") setAuto(!autopilot);
+    else if (k === "f") setFly(!cam.fly);
+    else if (k === "m") toggleMap();
+    else if (k === "t") skipTime();
     else if (k === "r") newWorld();
-    else if (k === "t") tod = (tod + 0.125) % 1;
     else if (k === "-" || k === "_") changeDetail(1);
     else if (k === "=" || k === "+") changeDetail(-1);
+    else if (k === "[") zoomMap(1);
+    else if (k === "]") zoomMap(-1);
   });
   addEventListener("keyup", ev => keys.delete(ev.key.toLowerCase()));
   addEventListener("blur", () => keys.clear());
 
-  document.getElementById("btnLetters").onclick = toggleLetters;
-  btnAuto.onclick = () => setAuto(!autopilot);
+  btnLetters.onclick = toggleLetters;
+  btnFly.onclick = () => setFly(!cam.fly);
+  document.getElementById("btnMap").onclick = toggleMap;
+  document.getElementById("btnTime").onclick = skipTime;
   document.getElementById("btnNew").onclick = () => newWorld();
-  document.getElementById("btnTime").onclick = () => (tod = (tod + 0.125) % 1);
   document.getElementById("btnLess").onclick = () => changeDetail(1);
   document.getElementById("btnMore").onclick = () => changeDetail(-1);
+  bigWrap.addEventListener("click", ev => { if (ev.target === bigWrap) toggleMap(); });
+  bigWrap.addEventListener("wheel", ev => { zoomMap(ev.deltaY > 0 ? 1 : -1); ev.preventDefault(); }, { passive: false });
+  mini.parentElement.addEventListener("click", toggleMap);
 
-  // Drag to look. On touch, dragging up/down also flies forward/back.
-  let drag = null, touchFly = 0;
+  const look = (dx, dy) => { cam.a += dx * 0.0035; cam.pitch = clamp(cam.pitch - dy * 0.0025, -0.6, 0.6); };
+  addEventListener("mousemove", ev => { if (document.pointerLockElement === view) look(ev.movementX, ev.movementY); });
+
+  // Pointer: mouse clicks lock the pointer (drag-to-look fallback); touch uses left half to move, right half to look.
+  const touches = new Map();
+  let joyX = 0, joyY = 0;
   view.addEventListener("pointerdown", ev => {
-    drag = { x: ev.clientX, y: ev.clientY, sy: ev.clientY, touch: ev.pointerType === "touch" };
+    if (ev.pointerType === "mouse") {
+      try { const p = view.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* not allowed here */ }
+    }
+    touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, sx: ev.clientX, sy: ev.clientY, move: ev.pointerType === "touch" && ev.clientX < innerWidth / 2 });
     view.setPointerCapture(ev.pointerId);
-    setAuto(false);
   });
   view.addEventListener("pointermove", ev => {
-    if (!drag) return;
-    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
-    drag.x = ev.clientX; drag.y = ev.clientY;
-    cam.a += dx * 0.005;
-    if (drag.touch) touchFly = clamp((drag.sy - ev.clientY) / 80, -1.5, 1.5);
-    else cam.pitch = clamp(cam.pitch + dy * 0.002, -0.35, 0.45);
+    const t = touches.get(ev.pointerId);
+    if (!t || document.pointerLockElement === view) return;
+    if (t.move) {
+      joyX = clamp((ev.clientX - t.sx) / 50, -1, 1); joyY = clamp((t.sy - ev.clientY) / 50, -1, 1);
+    } else look((ev.clientX - t.x) * (ev.pointerType === "touch" ? 1.4 : 1), (ev.clientY - t.y) * (ev.pointerType === "touch" ? 1.4 : 1));
+    t.x = ev.clientX; t.y = ev.clientY;
   });
-  const endDrag = () => { drag = null; touchFly = 0; };
-  view.addEventListener("pointerup", endDrag);
-  view.addEventListener("pointercancel", endDrag);
-  view.addEventListener("wheel", ev => { cam.z += ev.deltaY * -0.05; ev.preventDefault(); }, { passive: false });
+  const endTouch = ev => { const t = touches.get(ev.pointerId); if (t && t.move) { joyX = 0; joyY = 0; } touches.delete(ev.pointerId); };
+  view.addEventListener("pointerup", endTouch);
+  view.addEventListener("pointercancel", endTouch);
+  const jumpBtn = document.getElementById("jump");
+  jumpBtn.addEventListener("pointerdown", () => keys.add(" "));
+  jumpBtn.addEventListener("pointerup", () => keys.delete(" "));
+  jumpBtn.addEventListener("pointerleave", () => keys.delete(" "));
 
-  // ---------- simulation ----------
+  // =====================================================================
+  //  Simulation
+  // =====================================================================
+  function collideTrees() {
+    const ci = Math.floor(cam.x / TS), cj = Math.floor(cam.y / TS);
+    for (let j = cj - 1; j <= cj + 1; j++) for (let i = ci - 1; i <= ci + 1; i++) {
+      const tr = treeAt(i, j);
+      if (!tr || !tr.r) continue;
+      if (cam.z < tr.z + EYE - 0.5 || cam.z > tr.z + tr.h * 0.6 + EYE) continue;
+      const dx = cam.x - tr.x, dy = cam.y - tr.y, d = Math.hypot(dx, dy), min = tr.r + 0.35;
+      if (d < min && d > 1e-4) { cam.x = tr.x + dx / d * min; cam.y = tr.y + dy / d * min; }
+    }
+  }
+
   function step(dt) {
     clock += dt;
-    tod = (tod + dt / 240) % 1;      // a full day every four minutes
+    tod = (tod + dt / 300) % 1; // a day every five minutes
     letters += (lettersTarget - letters) * Math.min(1, dt * 5);
 
-    const boost = keys.has("shift") ? 3 : 1;
-    let fwd = 0, turn = 0, lift = 0;
+    let fwd = joyY, strafe = joyX, turn = 0;
     if (keys.has("w") || keys.has("arrowup")) fwd += 1;
     if (keys.has("s") || keys.has("arrowdown")) fwd -= 1;
-    if (keys.has("a") || keys.has("arrowleft")) turn -= 1;
-    if (keys.has("d") || keys.has("arrowright")) turn += 1;
-    if (keys.has("e") || keys.has(" ")) lift += 1;
-    if (keys.has("q") || keys.has("c")) lift -= 1;
-    fwd += touchFly;
+    if (keys.has("d")) strafe += 1;
+    if (keys.has("a")) strafe -= 1;
+    if (keys.has("arrowleft")) turn -= 1;
+    if (keys.has("arrowright")) turn += 1;
+    cam.a += turn * 1.8 * dt;
+    const len = Math.hypot(fwd, strafe);
+    if (len > 1) { fwd /= len; strafe /= len; }
+    const run = keys.has("shift");
 
-    if (autopilot) {
-      fwd = 0.8;
-      turn = (vnoise(clock * 0.05, 3.3) - 0.5) * 1.1;
-      // look ahead and keep a comfortable height over whatever is coming
-      let ahead = 0;
-      for (const d of [0, 25, 60, 110]) ahead = Math.max(ahead, groundAt(cam.x + Math.cos(cam.a) * d, cam.y + Math.sin(cam.a) * d));
-      cam.z += (ahead + 26 - cam.z) * Math.min(1, dt * 0.8);
-      cam.pitch += (0 - cam.pitch) * Math.min(1, dt);
+    const ground = floorAt(cam.x, cam.y);
+    cam.swimming = !cam.fly && ground < -1.1;
+    const speed = cam.fly ? (run ? 90 : 28) : cam.swimming ? (run ? 3.2 : 2) : (run ? 9 : 4.5);
+    const fx = Math.cos(cam.a), fy = Math.sin(cam.a);
+    cam.x += (fx * fwd - fy * strafe) * speed * dt;
+    cam.y += (fy * fwd + fx * strafe) * speed * dt;
+
+    if (cam.fly) {
+      let lift = 0;
+      if (keys.has(" ") || keys.has("e")) lift += 1;
+      if (keys.has("c") || keys.has("q")) lift -= 1;
+      cam.z += lift * (run ? 60 : 22) * dt;
+      cam.z = clamp(cam.z, Math.max(floorAt(cam.x, cam.y), 0) + EYE, 600);
+      return;
     }
-
-    cam.a += turn * 1.4 * dt;
-    const speed = 32 * boost;
-    cam.x += Math.cos(cam.a) * fwd * speed * dt;
-    cam.y += Math.sin(cam.a) * fwd * speed * dt;
-    cam.z += lift * 40 * boost * dt;
-    cam.z = clamp(cam.z, groundAt(cam.x, cam.y) + 4, 420);
+    collideTrees();
+    const g2 = floorAt(cam.x, cam.y);
+    if (cam.swimming) {
+      // float with the eye just above the surface, bobbing a little
+      const target = 0.35 + Math.sin(clock * 2) * 0.06;
+      cam.z += (target - cam.z) * Math.min(1, dt * 4);
+      cam.vz = 0;
+      cam.z = Math.max(cam.z, g2 + EYE * 0.6);
+      return;
+    }
+    cam.vz -= 20 * dt;
+    if (keys.has(" ") && cam.grounded) { cam.vz = 6.5; cam.grounded = false; }
+    cam.z += cam.vz * dt;
+    const feet = Math.max(g2, -1.1) + EYE;
+    if (cam.z <= feet) { cam.z = feet; cam.vz = 0; cam.grounded = true; }
+    else if (cam.z - feet > 0.2) cam.grounded = false;
   }
 
   const COMPASS = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"];
@@ -560,41 +895,48 @@
     const dir = COMPASS[Math.round(ang / (Math.PI / 4)) % 8];
     const mins = Math.floor(tod * 24 * 60);
     const hh = String(Math.floor(mins / 60)).padStart(2, "0"), mm = String(mins % 60).padStart(2, "0");
+    const mode = cam.fly ? "flying" : cam.swimming ? "swimming" : "on foot";
     readout.innerHTML =
-      `seed <b>${seed}</b> · <b>${hh}:${mm}</b> · heading <b>${dir}</b>\n` +
-      `x <b>${Math.round(cam.x)}</b> y <b>${Math.round(cam.y)}</b> · alt <b>${Math.round(cam.z - WATER)}</b> m · ${cols}×${rows} chars`;
+      `seed <b>${seed}</b> · <b>${hh}:${mm}</b> · facing <b>${dir}</b> · ${mode}\n` +
+      `elev <b>${Math.round(cam.z - EYE)}</b> m · mainland <b>${mainland.toFixed(0)}</b> km² (${(mainland * 0.386).toFixed(0)} mi²) · ${cols}×${rows} chars`;
+    document.getElementById("miniScale").textContent = fmtScale(MAP_ZOOMS[miniZoom]);
+    document.getElementById("mapScale").textContent = `1 char = ${MAP_ZOOMS[bigZoom]} m · ${(MAP_ZOOMS[bigZoom] * 200 / 1000).toFixed(1)} km across`;
   }
+  const readout = document.getElementById("readout");
 
-  // ---------- boot ----------
-  let last = performance.now(), readoutTimer = 0;
+  // =====================================================================
+  //  Boot
+  // =====================================================================
+  let last = performance.now(), slow = 0;
   function frame(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     step(dt);
     updateLight();
+    const t0 = performance.now();
     render();
-    if ((readoutTimer -= dt) <= 0) { updateReadout(); readoutTimer = 0.25; pruneChunks(); }
+    window.glyphscape.ms = performance.now() - t0;
+    updateMap(maps[0], 12);
+    drawMap(maps[0]);
+    if (!bigWrap.hidden) { updateMap(maps[1], 14); drawMap(maps[1]); }
+    if ((slow -= dt) <= 0) { updateReadout(); pruneChunks(); slow = 0.25; }
     requestAnimationFrame(frame);
   }
-
   function start(data) {
     if (data && data.seed != null) {
-      setSeed(data.seed); Object.assign(cam, data.cam); tod = data.tod; detail = data.detail ?? detail;
-    } else {
-      newWorld();
-    }
+      setSeed(data.seed); Object.assign(cam, data.cam); tod = data.tod; detail = data.detail ?? detail; mainland = measureMainland();
+    } else newWorld();
     buildGrid();
-    setAuto(autopilot);
+    setFly(cam.fly);
     requestAnimationFrame(frame);
   }
-
   window.claude?.hot?.snapshot?.(() => ({ seed, cam: { ...cam }, tod, detail }));
   addEventListener("resize", buildGrid);
+  window.glyphscape = { terrainH, cam, get seed() { return seed; } };
 
   const boot = () => (window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {}));
-  // Wait for the monospace face so the glyph atlas uses it; fall back after a moment either way.
   Promise.race([
-    document.fonts ? document.fonts.load('16px "IBM Plex Mono"') : Promise.resolve(),
+    document.fonts ? document.fonts.load('16px "Cascadia Code"') : Promise.resolve(),
     new Promise(r => setTimeout(r, 1200)),
   ]).then(boot, boot);
 })();
