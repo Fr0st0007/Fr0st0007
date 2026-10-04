@@ -117,6 +117,7 @@
     <label for="setFov"><span class="lab">Field of view <b id="valFov"></b></span><input type="range" id="setFov" min="50" max="100" step="1"></label>
     <label for="setView"><span class="lab">View distance</span>
       <select id="setView"><option value="0">Normal (1.7 km)</option><option value="1">Far (2.9 km)</option><option value="2">Very far (4.5 km)</option></select></label>
+    <label class="check" for="setFxaa"><input type="checkbox" id="setFxaa"> Smooth edges (FXAA anti-aliasing)</label>
     <label for="setDay"><span class="lab">Length of a day</span>
       <select id="setDay"><option value="5">5 minutes</option><option value="20">20 minutes</option><option value="60">1 hour</option><option value="0">Stop the clock</option></select></label>
     <button type="submit">Done</button>
@@ -1133,6 +1134,71 @@
   gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
   const U = n => gl.getUniformLocation(prog, n);
   const uCells = U("uCells"), uAtlas = U("uAtlas"), uCell = U("uCell"), uRes = U("uRes"), uGlyphs = U("uGlyphs"), uReveal = U("uReveal");
+
+  // ---- FXAA (3.11 "quality" style): the character image is drawn into an off-screen texture, then this
+  // pass finds edges by luminance, walks along each edge to find its ends and blends across it. The long
+  // edge search matters here, because the stair steps on a diagonal are a whole character wide.
+  const FXAA_FS = `#version 300 es
+  precision highp float;
+  uniform sampler2D uTex;
+  uniform vec2 uInv;
+  uniform float uSub;
+  out vec4 o;
+  const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+  float L(vec2 uv) { return dot(texture(uTex, uv).rgb, LUMA); }
+  void main() {
+    vec2 px = uInv, uv = gl_FragCoord.xy * px;
+    vec3 rgbM = texture(uTex, uv).rgb;
+    float lM = dot(rgbM, LUMA);
+    float lS = L(uv + vec2(0., -px.y)), lN = L(uv + vec2(0., px.y)), lE = L(uv + vec2(px.x, 0.)), lW = L(uv + vec2(-px.x, 0.));
+    float rMax = max(max(lN, lS), max(lE, max(lW, lM))), rMin = min(min(lN, lS), min(lE, min(lW, lM)));
+    float range = rMax - rMin;
+    if (range < max(0.0312, rMax * 0.125)) { o = vec4(rgbM, 1.); return; }
+    float lNW = L(uv + vec2(-px.x, px.y)), lNE = L(uv + px), lSW = L(uv - px), lSE = L(uv + vec2(px.x, -px.y));
+    float lNS = lN + lS, lWE = lW + lE;
+    float edgeH = abs(-2. * lW + lNW + lSW) + abs(-2. * lM + lNS) * 2. + abs(-2. * lE + lNE + lSE);
+    float edgeV = abs(-2. * lS + lSW + lSE) + abs(-2. * lM + lWE) * 2. + abs(-2. * lN + lNW + lNE);
+    bool horz = edgeH >= edgeV;
+    float l1 = horz ? lS : lW, l2 = horz ? lN : lE;
+    float g1 = l1 - lM, g2 = l2 - lM;
+    bool steep1 = abs(g1) >= abs(g2);
+    float gScaled = 0.25 * max(abs(g1), abs(g2));
+    float stepLen = horz ? px.y : px.x;
+    float lLocalAvg;
+    if (steep1) { stepLen = -stepLen; lLocalAvg = 0.5 * (l1 + lM); } else lLocalAvg = 0.5 * (l2 + lM);
+    vec2 cur = uv;
+    if (horz) cur.y += stepLen * 0.5; else cur.x += stepLen * 0.5;
+    vec2 off = horz ? vec2(px.x, 0.) : vec2(0., px.y);
+    vec2 uv1 = cur - off, uv2 = cur + off;
+    float le1 = L(uv1) - lLocalAvg, le2 = L(uv2) - lLocalAvg;
+    bool r1 = abs(le1) >= gScaled, r2 = abs(le2) >= gScaled;
+    const float Q[12] = float[](1., 1., 1., 1., 1.5, 2., 2., 2., 2., 4., 8., 8.);
+    for (int i = 0; i < 12; i++) {
+      if (r1 && r2) break;
+      if (!r1) { uv1 -= off * Q[i]; le1 = L(uv1) - lLocalAvg; r1 = abs(le1) >= gScaled; }
+      if (!r2) { uv2 += off * Q[i]; le2 = L(uv2) - lLocalAvg; r2 = abs(le2) >= gScaled; }
+    }
+    float d1 = horz ? uv.x - uv1.x : uv.y - uv1.y, d2 = horz ? uv2.x - uv.x : uv2.y - uv.y;
+    bool dir1 = d1 < d2;
+    float pixOff = -min(d1, d2) / (d1 + d2) + 0.5;
+    bool correct = ((dir1 ? le1 : le2) < 0.) != (lM < lLocalAvg);
+    float finalOff = correct ? pixOff : 0.;
+    float lAvg = (1. / 12.) * (2. * (lNS + lWE) + lNW + lNE + lSW + lSE);
+    float sub1 = clamp(abs(lAvg - lM) / range, 0., 1.);
+    float sub2 = (-2. * sub1 + 3.) * sub1 * sub1;
+    finalOff = max(finalOff, sub2 * sub2 * uSub);
+    vec2 fuv = uv;
+    if (horz) fuv.y += finalOff * stepLen; else fuv.x += finalOff * stepLen;
+    o = vec4(texture(uTex, fuv).rgb, 1.);
+  }`;
+  const fxaaProg = gl.createProgram();
+  gl.attachShader(fxaaProg, shader(gl.VERTEX_SHADER, VS));
+  gl.attachShader(fxaaProg, shader(gl.FRAGMENT_SHADER, FXAA_FS));
+  gl.bindAttribLocation(fxaaProg, aP, "p");
+  gl.linkProgram(fxaaProg);
+  if (!gl.getProgramParameter(fxaaProg, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(fxaaProg));
+  const uFxTex = gl.getUniformLocation(fxaaProg, "uTex"), uFxInv = gl.getUniformLocation(fxaaProg, "uInv"), uFxSub = gl.getUniformLocation(fxaaProg, "uSub");
+  let fbo = null, fboTex = null;
   function makeTex() {
     const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
@@ -1157,7 +1223,15 @@
     a.canvas.width = cw * RAMP.length; a.canvas.height = chh;
     a.font = font; a.fillStyle = "#fff"; a.textBaseline = "middle"; a.textAlign = "center";
     [...RAMP].forEach((g, i) => { if (i) a.fillText(g, i * cw + cw / 2, chh / 2 + dpr * 0.5); });
-    if (!atlasTex) { atlasTex = makeTex(); cellTex = makeTex(); }
+    if (!atlasTex) { atlasTex = makeTex(); cellTex = makeTex(); fboTex = makeTex(); fbo = gl.createFramebuffer(); }
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, fboTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, SW, SHt, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboTex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.useProgram(prog);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, atlasTex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -1240,7 +1314,7 @@
     { name: "Far", maxd: 2900, sprite: 430, struct: 1100 },
     { name: "Very far", maxd: 4500, sprite: 520, struct: 1400 },
   ];
-  const settings = { sens: 1, invertY: false, fovDeg: 69, view: 1, dayMin: 5 };
+  const settings = { sens: 1, invertY: false, fovDeg: 69, view: 1, dayMin: 5, fxaa: true };
   try { Object.assign(settings, JSON.parse(localStorage.getItem("glyphscape-settings") || "{}")); } catch (e) { /* storage unavailable */ }
   let FOV = settings.fovDeg * Math.PI / 180;
   let MAXD = 2900, SPRITE_D = 430, STRUCT_D = 1100;
@@ -1390,8 +1464,19 @@
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, cellTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, D);
+    gl.useProgram(prog);
     gl.uniform1f(uReveal, letters);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (settings.fxaa) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);       // 1) characters -> off-screen texture
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);      // 2) FXAA -> screen
+      gl.useProgram(fxaaProg);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, fboTex);
+      gl.uniform1i(uFxTex, 2); gl.uniform2f(uFxInv, 1 / SW, 1 / SHt);
+      gl.uniform1f(uFxSub, mix(0.6, 0.15, letters)); // soften less when the letters are on show
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.activeTexture(gl.TEXTURE0);
+    } else gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
   // ---- buildings: a tiny polygon rasteriser on the character grid, with exact ray-plane depth
@@ -1919,9 +2004,9 @@
   });
   cmdInput.addEventListener("blur", () => (cmdWrap.hidden = true));
   const setWrap = document.getElementById("settings");
-  const elSens = document.getElementById("setSens"), elInv = document.getElementById("setInvert"), elFov = document.getElementById("setFov"), elView = document.getElementById("setView"), elDay = document.getElementById("setDay");
+  const elSens = document.getElementById("setSens"), elInv = document.getElementById("setInvert"), elFov = document.getElementById("setFov"), elView = document.getElementById("setView"), elDay = document.getElementById("setDay"), elFxaa = document.getElementById("setFxaa");
   function syncSettingsUI() {
-    elSens.value = settings.sens; elInv.checked = settings.invertY; elFov.value = settings.fovDeg; elView.value = String(settings.view); elDay.value = String(settings.dayMin);
+    elSens.value = settings.sens; elInv.checked = settings.invertY; elFov.value = settings.fovDeg; elView.value = String(settings.view); elDay.value = String(settings.dayMin); elFxaa.checked = settings.fxaa;
     document.getElementById("valSens").textContent = (+settings.sens).toFixed(2) + "×";
     document.getElementById("valFov").textContent = settings.fovDeg + "°";
   }
@@ -1931,15 +2016,17 @@
   }
   const onSetting = () => {
     settings.sens = +elSens.value; settings.invertY = elInv.checked; settings.fovDeg = +elFov.value;
-    settings.view = +elView.value; settings.dayMin = +elDay.value;
+    settings.view = +elView.value; settings.dayMin = +elDay.value; settings.fxaa = elFxaa.checked;
     applySettings(); syncSettingsUI();
   };
-  [elSens, elInv, elFov, elView, elDay].forEach(el => el.addEventListener("input", onSetting));
+  [elSens, elInv, elFov, elView, elDay, elFxaa].forEach(el => el.addEventListener("input", onSetting));
   document.getElementById("settingsForm").addEventListener("submit", ev => { ev.preventDefault(); toggleSettings(); });
   setWrap.addEventListener("click", ev => { if (ev.target === setWrap) toggleSettings(); });
   document.getElementById("btnSettings").onclick = toggleSettings;
 
   addEventListener("keydown", ev => {
+    if (ev.key === "Escape" && !setWrap.hidden) { toggleSettings(); return; }
+    if (ev.key === "Escape" && !timeWrap.hidden) { toggleTime(); return; }
     if (ev.target.closest && ev.target.closest("button, input, select") && (ev.key === " " || ev.key === "Enter" || ev.target.tagName !== "BUTTON")) return;
     if (!setWrap.hidden) { if (ev.key === "Escape" || ev.key.toLowerCase() === "o") toggleSettings(); return; }
     if (!timeWrap.hidden) { if (ev.key === "Escape" || ev.key.toLowerCase() === "t") toggleTime(); return; }
