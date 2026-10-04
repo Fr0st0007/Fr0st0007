@@ -410,7 +410,7 @@
     }
 
     W = { N, CELL, O, base, filled, acc, lake, lakeD, isRiv, rivers, roads: [], sites: [], bridges: [] };
-    RDH = new SHash(64); PH = new SHash(64); SH = new SHash(32);
+    RDH = new SHash(64); PH = new SHash(64); SH = new SHash(32); solidList.length = 0; SHL.forEach(L => { L.cur = null; L.work = null; });
     structures = []; npcs = []; fires = []; staticLights = [];
 
     // --- mainland area: flood fill the land connected to the middle
@@ -722,7 +722,7 @@
       hh[q] = TSa.h; ww[q] = TSa.wl; meta[q * 3] = TSa.path; meta[q * 3 + 1] = TSa.built ? 1 : TSa.clear ? 2 : 0; meta[q * 3 + 2] = (TSa.wet * 255) | 0;
     }
     const n = CS * CS;
-    const ch = { x0, y0, h: new Float32Array(n), floor: new Float32Array(n), wl: new Float32Array(n), col: new Uint8Array(n * 3), kind: new Uint8Array(n), jit: new Uint8Array(n), noTree: new Uint8Array(n) };
+    const ch = { x0, y0, h: new Float32Array(n), floor: new Float32Array(n), wl: new Float32Array(n), col: new Uint8Array(n * 3), nrm: new Int8Array(n * 3), kind: new Uint8Array(n), jit: new Uint8Array(n), noTree: new Uint8Array(n) };
     for (let j = 0; j < CS; j++) for (let i = 0; i < CS; i++) {
       const k = j * CS + i, q = (j + 1) * N + i + 1, gx = (x0 + i) * step, gy = (y0 + j) * step;
       const h = hh[q], wl = ww[q];
@@ -730,9 +730,13 @@
       const steep = Math.abs(sx) + Math.abs(sy);
       const rnd = hash2(gx, gy), rnd2 = hash2(gy + 7, gx - 3);
       const kind = classify(h, wl, steep, moistureAt(gx, gy, meta[q * 3 + 2] / 255), rnd, meta[q * 3], meta[q * 3 + 1] === 1, tmp);
-      let shade = kind === K.WATER ? 1 : clamp(1 + (sx + sy) * 0.5, 0.55, 1.4);
-      let top = Math.max(h, wl);
-      if (coarse && (kind === K.FOREST || kind === K.PINE)) { top += kind === K.PINE ? 12 : 8; shade *= 0.82 + rnd2 * 0.12; }
+      // albedo only: lighting (sun direction, shadows) is applied per frame from the normal
+      let shade = 1, top = Math.max(h, wl);
+      let nx = -sx, ny = -sy, nz = 1;
+      if (kind === K.WATER) { nx = 0; ny = 0; }
+      if (coarse && (kind === K.FOREST || kind === K.PINE)) { top += kind === K.PINE ? 12 : 8; shade = 0.8 + rnd2 * 0.12; nx *= 0.3; ny *= 0.3; }
+      const nl = Math.hypot(nx, ny, nz);
+      ch.nrm[k * 3] = nx / nl * 127; ch.nrm[k * 3 + 1] = ny / nl * 127; ch.nrm[k * 3 + 2] = nz / nl * 127;
       const v = 0.94 + rnd2 * 0.12;
       ch.h[k] = top; ch.floor[k] = h; ch.wl[k] = wl;
       ch.col[k * 3] = clamp(tmp[0] * shade * v, 0, 255);
@@ -789,6 +793,7 @@
   const MAT = { STONE: 1, DECK: 2, PLASTER: 3, WOOD: 4, ROOF: 5, THATCH: 6, WINDOW: 7, FLOOR: 8, POST: 9, WININ: 10 };
 
   function addSolid(s) {
+    solidList.push(s);
     const r = Math.hypot(s.hu, s.hv) + 1;
     SH.add(s, s.cx - r, s.cy - r, s.cx + r, s.cy + r);
   }
@@ -1094,7 +1099,7 @@
   const FONT_SIZES = [3, 4, 5, 6, 7, 8, 10, 12, 15];
   let detail = 2;
   let dpr = 1, SW = 0, SHt = 0, cw = 4, chh = 8, cols = 0, rows = 0;
-  let cellData, cellDepth, cellJit, cellEmit;
+  let cellData, cellDepth, cellJit, cellEmit, cellAlb, cellNrm, cellOff;
   let cellTex, atlasTex;
 
   const VS = `#version 300 es
@@ -1113,6 +1118,9 @@
     float g = floor(d.a * 255. + .5);
     float m = texture(uAtlas, vec2((g + f.x) / uGlyphs, f.y)).a;
     vec3 c = d.rgb;
+    float lum0 = dot(c, vec3(0.299, 0.587, 0.114));
+    c = clamp(mix(vec3(lum0), c, 1.12), 0., 1.);       // a touch more colour
+    c = mix(c, c * c * (3. - 2. * c), 0.18);            // and a gentle S-curve for contrast
     vec3 bg = c * mix(.92, .05, uReveal);
     vec3 fg = min(c * mix(1.07, 1.4, uReveal) + mix(.01, .05, uReveal), 1.);
     o = vec4(mix(bg, fg, m), 1.);
@@ -1243,7 +1251,10 @@
     cellData = new Uint8ClampedArray(cols * rows * 4);   // clamped: no colour wrap-around
     cellDepth = new Float32Array(cols * rows);
     cellJit = new Uint8Array(cols * rows);
-    cellEmit = new Uint8Array(cols * rows);
+    cellEmit = new Uint8Array(cols * rows);   // 1 = colour is final (sky, water, flames, lit windows)
+    cellAlb = new Float32Array(cols * rows * 3);
+    cellNrm = new Int8Array(cols * rows * 3);
+    cellOff = new Float32Array(cols * rows);  // how far to step toward the sun before testing shadow (sprites)
   }
 
   // =====================================================================
@@ -1337,8 +1348,7 @@
     Object.assign(V, { tanHalf, fx, fy, rx, ry, fCols, scaleY, horizon, fogK: 1 / (MAXD * 0.62), night: 1 - Lt.day });
     const sunElev = Math.asin(clamp(Lt.sunE, -1, 1));
     const night = V.night, tick = Math.floor(clock * 3), wind = clock * 0.02, fogK = V.fogK;
-    const D = cellData, Z = cellDepth, J = cellJit, E = cellEmit;
-    E.fill(0);
+    const D = cellData, Z = cellDepth, J = cellJit, E = cellEmit, A = cellAlb, NR = cellNrm, OF = cellOff;
 
     const bodyPos = (az, elev) => {
       let d = az - cam.a; d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -1372,8 +1382,10 @@
         if (sy < ybuf) {
           if (sy < 0) sy = 0;
           const raw0 = ch.col[k * 3], raw1 = ch.col[k * 3 + 1], raw2 = ch.col[k * 3 + 2];
-          let r = raw0 * Lt.r, g = raw1 * Lt.g, b = raw2 * Lt.b;
-          if (ch.kind[k] === K.WATER) {
+          const isWater = ch.kind[k] === K.WATER;
+          let r = raw0, g = raw1, b = raw2;
+          if (isWater) {
+            r *= Lt.r; g *= Lt.g; b *= Lt.b;
             const eye = cam.z - wl;
             const depth = Math.max(0, wl - ch.floor[k]);
             const tw = 0.28 + 0.72 * (1 - Math.exp(-depth * 0.32));
@@ -1387,12 +1399,21 @@
               r += 255 * s; g += (225 - Lt.dusk * 60) * s; b += (170 - Lt.dusk * 90) * s;
             }
           }
-          const fog = 1 - Math.exp(-z * fogK);
-          r = mix(r, Lt.hr, fog); g = mix(g, Lt.hg, fog); b = mix(b, Lt.hb, fog);
           const jit = ch.jit[k];
-          for (let rr = sy; rr < ybuf; rr++) {
-            const c = rr * cols + i, p = c * 4;
-            D[p] = r; D[p + 1] = g; D[p + 2] = b; Z[c] = z; J[c] = jit;
+          if (isWater) {
+            const fog = 1 - Math.exp(-z * fogK);
+            r = mix(r, Lt.hr, fog); g = mix(g, Lt.hg, fog); b = mix(b, Lt.hb, fog);
+            for (let rr = sy; rr < ybuf; rr++) {
+              const c = rr * cols + i, p = c * 4;
+              D[p] = r; D[p + 1] = g; D[p + 2] = b; Z[c] = z; J[c] = jit; E[c] = 1;
+            }
+          } else {
+            const n0 = ch.nrm[k * 3], n1 = ch.nrm[k * 3 + 1], n2 = ch.nrm[k * 3 + 2];
+            for (let rr = sy; rr < ybuf; rr++) {
+              const c = rr * cols + i, q = c * 3;
+              A[q] = r; A[q + 1] = g; A[q + 2] = b; NR[q] = n0; NR[q + 1] = n1; NR[q + 2] = n2;
+              Z[c] = z; J[c] = jit; E[c] = 0; OF[c] = 0;
+            }
           }
           ybuf = sy;
         }
@@ -1443,7 +1464,7 @@
             if (d < moonR) { r = mix(r, 225, night); g = mix(g, 230, night); b = mix(b, 245, night); }
           }
           D[p] = r; D[p + 1] = g; D[p + 2] = b;
-          Z[c] = 1e9; J[c] = (hash2(i, rr) * 255) | 0;
+          Z[c] = 1e9; J[c] = (hash2(i, rr) * 255) | 0; E[c] = 1;
         }
       }
     }
@@ -1451,7 +1472,8 @@
     drawStructures();
     drawTrees();
     drawFiguresAndFires();
-    applyLights();
+    updateShadows();
+    lightPass();
 
     // brightness -> glyph
     const n = cols * rows, NG = RAMP.length;
@@ -1565,11 +1587,9 @@
     }
     if (xmax < 0 || xmin > cols || ymax < 0 || ymin > rows) return;
     const r0 = Math.max(0, Math.ceil(ymin - 0.5)), r1 = Math.min(rows - 1, Math.floor(ymax - 0.5));
-    // shading
-    const dif = Math.max(0, nx * Lt.sx + ny * Lt.sy + nz * Lt.sz);
-    const shade = 0.5 + 0.62 * dif;
     const emissiveWindow = q.mat === MAT.WINDOW && night > 0.3, daylitWindow = q.mat === MAT.WININ;
-    const D = cellData, Z = cellDepth, J = cellJit, E = cellEmit;
+    const D = cellData, Z = cellDepth, J = cellJit, E = cellEmit, A = cellAlb, NR = cellNrm, OF = cellOff;
+    const n0 = nx * 127, n1 = ny * 127, n2 = nz * 127;
     for (let r = r0; r <= r1; r++) {
       const yc = r + 0.5;
       let xl = 1e9, xr = -1e9;
@@ -1594,14 +1614,17 @@
         if (z <= 0 || z >= Z[idx]) continue;
         const wx = cam.x + ddx * z, wy = cam.y + ddy * z, wz = cam.z + hgt * z;
         matColor(q.mat, wx, wy, wz, nx, ny, nz);
-        let cr, cg, cb;
-        if (daylitWindow) { const l = mix(0.15, 1.05, Lt.day); cr = MC[0] * l; cg = MC[1] * l; cb = MC[2] * l * (1 + 0.3 * (1 - Lt.day)); E[idx] = 1; }
-        else if (emissiveWindow) { const f = (night - 0.3) / 0.7; cr = mix(MC[0] * Lt.r, 255, f); cg = mix(MC[1] * Lt.g, 196, f); cb = mix(MC[2] * Lt.b, 110, f); E[idx] = 1; }
-        else { cr = MC[0] * shade * Lt.r; cg = MC[1] * shade * Lt.g; cb = MC[2] * shade * Lt.b; E[idx] = 0; }
-        const fog = 1 - Math.exp(-z * fogK);
-        const p = idx * 4;
-        D[p] = mix(cr, Lt.hr, fog); D[p + 1] = mix(cg, Lt.hg, fog); D[p + 2] = mix(cb, Lt.hb, fog);
-        Z[idx] = z; J[idx] = (hash2(Math.floor(wx * 3), Math.floor(wz * 3 + wy * 3)) * 255) | 0;
+        Z[idx] = z;
+        if (daylitWindow || emissiveWindow) {
+          let cr, cg, cb;
+          if (daylitWindow) { const l = mix(0.15, 1.05, Lt.day); cr = MC[0] * l; cg = MC[1] * l; cb = MC[2] * l * (1 + 0.3 * (1 - Lt.day)); }
+          else { const f = (night - 0.3) / 0.7; cr = mix(MC[0] * Lt.r, 255, f); cg = mix(MC[1] * Lt.g, 196, f); cb = mix(MC[2] * Lt.b, 110, f); }
+          const fog = 1 - Math.exp(-z * fogK), p = idx * 4;
+          D[p] = mix(cr, Lt.hr, fog); D[p + 1] = mix(cg, Lt.hg, fog); D[p + 2] = mix(cb, Lt.hb, fog); E[idx] = 1;
+        } else {
+          const q = idx * 3;
+          A[q] = MC[0]; A[q + 1] = MC[1]; A[q + 2] = MC[2]; NR[q] = n0; NR[q + 1] = n1; NR[q + 2] = n2; E[idx] = 0; OF[idx] = 0;
+        } J[idx] = (hash2(Math.floor(wx * 3), Math.floor(wz * 3 + wy * 3)) * 255) | 0;
       }
     }
   }
@@ -1625,12 +1648,28 @@
     SPR.z = z;
     return true;
   }
-  function putCell(c, z, r, g, b, jit, emissive) {
-    const fog = 1 - Math.exp(-z * V.fogK);
-    if (!emissive) { r *= Lt.r; g *= Lt.g; b *= Lt.b; }
-    const p = c * 4;
-    cellData[p] = mix(r, Lt.hr, fog); cellData[p + 1] = mix(g, Lt.hg, fog); cellData[p + 2] = mix(b, Lt.hb, fog);
-    cellDepth[c] = z; cellJit[c] = jit; cellEmit[c] = emissive ? 1 : 0;
+  // Sprite normals are built from billboard coordinates: a = along the camera's right, b = up, the rest toward the camera.
+  const SN = [0, 0, 1];
+  function spriteNormal(a, b) {
+    const k = Math.sqrt(Math.max(0, 1 - a * a - b * b));
+    let nx = V.rx * a - V.fx * k, ny = V.ry * a - V.fy * k, nz = b;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    SN[0] = nx / l; SN[1] = ny / l; SN[2] = nz / l;
+    return SN;
+  }
+  function putCell(c, z, r, g, b, jit, emissive, n = null, off = 0) {
+    cellDepth[c] = z; cellJit[c] = jit;
+    if (emissive) {
+      const fog = 1 - Math.exp(-z * V.fogK), p = c * 4;
+      cellData[p] = mix(r, Lt.hr, fog); cellData[p + 1] = mix(g, Lt.hg, fog); cellData[p + 2] = mix(b, Lt.hb, fog);
+      cellEmit[c] = 1;
+      return;
+    }
+    const q = c * 3;
+    cellAlb[q] = r; cellAlb[q + 1] = g; cellAlb[q + 2] = b;
+    if (n) { cellNrm[q] = n[0] * 127; cellNrm[q + 1] = n[1] * 127; cellNrm[q + 2] = n[2] * 127; }
+    else { cellNrm[q] = -V.fx * 90; cellNrm[q + 1] = -V.fy * 90; cellNrm[q + 2] = 90; }
+    cellEmit[c] = 0; cellOff[c] = off;
   }
 
   function drawTrees() {
@@ -1648,7 +1687,7 @@
         const tr = treeAt(i, j);
         if (!tr || !project(tr.x, tr.y, tr.z, tr.h, tr.w)) continue;
         const { colC, halfW, base, hgt, z, c0, c1, r0, r1 } = SPR;
-        const sd = tr.seed, type = tr.type, tint = 0.85 + sd * 0.3;
+        const sd = tr.seed, type = tr.type, tint = 0.85 + sd * 0.3, off = tr.w * 0.5 + 0.6;
         const bx1 = -0.28 + sd * 0.1, by1 = 0.62, bx2 = 0.3 - sd * 0.12, by2 = 0.6 + sd * 0.08, bx3 = 0.02, by3 = 0.8;
         for (let rr = r0; rr <= r1; rr++) {
           const v = (base - (rr + 0.5)) / hgt;
@@ -1657,35 +1696,43 @@
             const c = rr * cols + cc;
             if (Z[c] <= z) continue;
             const u = (cc + 0.5 - colC) / halfW;
-            let r = -1, g = 0, b = 0;
+            let r = -1, g = 0, b = 0, n = null;
             const qn = hash2(Math.floor(u * 9 + sd * 50), Math.floor(v * 12 + sd * 70));
+            const leafy = 0.88 + (qn - 0.5) * 0.3; // clumps of leaves catch light differently
             if (type === T_OAK) {
               const d1 = Math.hypot(u - bx1, (v - by1) * 1.25), d2 = Math.hypot(u - bx2, (v - by2) * 1.25), d3 = Math.hypot(u - bx3, (v - by3) * 1.4);
               const edge = 0.36 + (qn - 0.5) * 0.09;
               if ((d1 < edge || d2 < edge * 0.95 || d3 < edge * 0.9) && v > 0.38) {
-                const lit = clamp(0.7 + (v - 0.6) * 0.9 - u * 0.25 + (qn - 0.5) * 0.3, 0.35, 1.25);
-                r = 92 * lit * tint; g = 150 * lit; b = 58 * lit;
+                // normal of whichever leaf ball this is (a sphere), so the crown is lit like a round mass
+                let bx = bx3, by = by3, e = edge * 0.9, sy = 1.4;
+                if (d1 / edge < d3 / (edge * 0.9) && d1 <= d2) { bx = bx1; by = by1; e = edge; sy = 1.25; }
+                else if (d2 / (edge * 0.95) < d3 / (edge * 0.9)) { bx = bx2; by = by2; e = edge * 0.95; sy = 1.25; }
+                n = spriteNormal(clamp((u - bx) / e, -1, 1) * 0.85, clamp((v - by) * sy / e, -1, 1) * 0.85 + 0.1);
+                const inner = clamp(1 - Math.min(d1, d2, d3) / edge, 0, 1);
+                r = 92 * tint * leafy; g = 150 * leafy * (0.9 + 0.1 * inner); b = 58 * leafy;
               } else {
                 const trunkW = 0.075 + (v < 0.12 ? (0.12 - v) * 0.5 : 0);
                 const branch = v > 0.35 && v < 0.6 && Math.abs(Math.abs(u) - (v - 0.35) * 1.2) < 0.05;
-                if ((Math.abs(u) < trunkW && v < 0.6) || branch) { const lit = u < 0 ? 1.05 : 0.75; r = 108 * lit; g = 70 * lit; b = 44 * lit; }
+                if ((Math.abs(u) < trunkW && v < 0.6) || branch) { n = spriteNormal(clamp(u / trunkW, -1, 1) * 0.9, 0); r = 108; g = 70; b = 44; }
               }
             } else if (type === T_PINE) {
-              if (v < 0.16) { if (Math.abs(u) < 0.1) { const lit = u < 0 ? 1 : 0.7; r = 92 * lit; g = 62 * lit; b = 40 * lit; } }
+              if (v < 0.16) { if (Math.abs(u) < 0.1) { n = spriteNormal(u / 0.1 * 0.9, 0); r = 92; g = 62; b = 40; } }
               else {
-                const tier = (v * 6) % 1;
-                if (Math.abs(u) < (1 - v) * (0.85 + 0.25 * (1 - tier)) + (qn - 0.5) * 0.08) {
-                  const lit = clamp(0.62 + (1 - tier) * 0.3 - u * 0.25 + (qn - 0.5) * 0.25, 0.3, 1.1);
-                  r = 40 * lit * tint; g = 92 * lit; b = 56 * lit;
+                const tier = (v * 6) % 1, wdt = (1 - v) * (0.85 + 0.25 * (1 - tier)) + (qn - 0.5) * 0.08;
+                if (Math.abs(u) < wdt) {
+                  n = spriteNormal(clamp(u / wdt, -1, 1) * 0.8, 0.45);
+                  const ao = 0.72 + (1 - tier) * 0.3; // the underside of each tier sits in its own shade
+                  r = 40 * tint * leafy * ao; g = 92 * leafy * ao; b = 56 * leafy * ao;
                 }
               }
             } else {
-              if (Math.hypot(u, (v - 0.5) * 1.9) < 0.95 + (qn - 0.5) * 0.25) {
-                const lit = clamp(0.6 + v * 0.5 - u * 0.2 + (qn - 0.5) * 0.3, 0.35, 1.2);
-                r = 76 * lit * tint; g = 128 * lit; b = 52 * lit;
+              const dv = (v - 0.5) * 1.9;
+              if (Math.hypot(u, dv) < 0.95 + (qn - 0.5) * 0.25) {
+                n = spriteNormal(clamp(u, -1, 1) * 0.85, clamp(dv, -1, 1) * 0.6 + 0.3);
+                r = 76 * tint * leafy; g = 128 * leafy; b = 52 * leafy;
               }
             }
-            if (r >= 0) putCell(c, z, r, g, b, (qn * 255) | 0, false);
+            if (r >= 0) putCell(c, z, r, g, b, (qn * 255) | 0, false, n, off);
           }
         }
       }
@@ -1737,7 +1784,7 @@
             if (v > 0.52 && v < 0.84 && u < 0.86) { r = 90; g = 60; b = 36; em = false; }
             else if (v >= 0.84) { const f = flame((u - 0.8) * 6, (v - 0.84) / 0.16, n.id); if (f > 0) { r = 255; g = 150 + 90 * f; b = 50 + 60 * f; em = true; } }
           }
-          if (r >= 0) putCell(c, z, r, g, b, (hash2(cc, rr) * 255) | 0, em);
+          if (r >= 0) putCell(c, z, r, g, b, (hash2(cc, rr) * 255) | 0, em, em ? null : spriteNormal(clamp(u, -1, 1) * 0.45, 0.2), 0.7);
         }
       }
     }
@@ -1769,39 +1816,170 @@
     }
   }
 
-  // ---- point lights at night (torches, fires, windows, the player's lantern)
+  // ---- sun shadows
+  // For every spot around the player we store H: the height a point there must be above to see the sun.
+  // H is found by marching from the spot toward the sun over an "occluder" height grid (terrain, tree
+  // crowns, building tops) and keeping the highest (occluder - distance * tan(sun elevation)).
+  // Any point (ground, wall, leaf, person) is then lit if it sits above H, with a soft edge that widens
+  // with distance to whatever casts the shadow. Two grids: 1 m near the player, 5 m out to ~1.6 km.
+  const SHL = [
+    { N: 320, res: 1, maxT: 160, rowsPer: 22, cur: null, work: null },
+    { N: 320, res: 5, maxT: 1200, rowsPer: 8, cur: null, work: null },
+  ];
+  const solidList = [];
+  function shadowStart(L) {
+    const N = L.N, res = L.res, snap = res * 16;
+    const cx = Math.round(cam.x / snap) * snap, cy = Math.round(cam.y / snap) * snap;
+    const x0 = cx - N / 2 * res, y0 = cy - N / 2 * res;
+    const occ = new Float32Array(N * N);
+    const lod = res === 1 ? 0 : 1, step = LODS[lod].step;
+    let lcx = 1e9, lcy = 1e9, ch = null, omax = -1e9;
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const gx = Math.floor((x0 + i * res) / step), gy = Math.floor((y0 + j * res) / step);
+      const ccx = Math.floor(gx / CS), ccy = Math.floor(gy / CS);
+      if (ccx !== lcx || ccy !== lcy) { ch = chunkAt(lod, ccx, ccy); lcx = ccx; lcy = ccy; }
+      occ[j * N + i] = ch.h[(gy - ch.y0) * CS + (gx - ch.x0)];
+    }
+    const stamp = (i, j, v) => { if (i >= 0 && j >= 0 && i < N && j < N) { const k = j * N + i; if (v > occ[k]) occ[k] = v; } };
+    if (res === 1) {
+      // tree crowns
+      const ti0 = Math.floor(x0 / TSP) - 1, tj0 = Math.floor(y0 / TSP) - 1, tn = Math.ceil(N / TSP) + 2;
+      for (let tj = tj0; tj < tj0 + tn; tj++) for (let ti = ti0; ti < ti0 + tn; ti++) {
+        const tr = treeAt(ti, tj);
+        if (!tr) continue;
+        const rad = tr.type === T_PINE ? tr.w * 0.5 : tr.w * 0.45, ci = Math.round(tr.x - x0), cj = Math.round(tr.y - y0), R = Math.ceil(rad);
+        for (let dj = -R; dj <= R; dj++) for (let di = -R; di <= R; di++) {
+          const d = Math.hypot(di, dj) / rad;
+          if (d > 1) continue;
+          const v = tr.type === T_OAK ? tr.z + tr.h * (0.55 + 0.45 * Math.sqrt(1 - d * d)) : tr.type === T_PINE ? tr.z + tr.h * (0.15 + 0.85 * (1 - d)) : tr.z + tr.h;
+          stamp(ci + di, cj + dj, v);
+        }
+      }
+      // buildings, walls, bridges
+      for (const so of solidList) {
+        const rr = Math.hypot(so.hu, so.hv);
+        if (so.cx + rr < x0 || so.cy + rr < y0 || so.cx - rr > x0 + N || so.cy - rr > y0 + N) continue;
+        for (let jj = Math.floor(so.cy - rr - y0); jj <= Math.ceil(so.cy + rr - y0); jj++) for (let ii = Math.floor(so.cx - rr - x0); ii <= Math.ceil(so.cx + rr - x0); ii++) {
+          const dx = x0 + ii - so.cx, dy = y0 + jj - so.cy;
+          const u = dx * so.ux + dy * so.uy, v = -dx * so.uy + dy * so.ux;
+          if (Math.abs(u) > so.hu + 0.5 || Math.abs(v) > so.hv + 0.5) continue;
+          stamp(ii, jj, so.tf ? so.tf(clamp(u, -so.hu, so.hu)) : so.top);
+        }
+      }
+    }
+    for (let k = 0; k < N * N; k++) if (occ[k] > omax) omax = occ[k];
+    const el = Math.max(Math.asin(Math.min(1, Math.abs(Lt.sunE))), 0.035);
+    const hl = Math.hypot(Lt.sx, Lt.sy) || 1;
+    L.work = { x0, y0, occ, omax, H: new Float32Array(N * N), T: new Float32Array(N * N), row: 0, dx: Lt.sx / hl, dy: Lt.sy / hl, tanE: Math.tan(el), sunE: Lt.sunE, camx: cam.x, camy: cam.y };
+  }
+  function shadowRows(L) {
+    const w = L.work, N = L.N, res = L.res, occ = w.occ, end = Math.min(N, w.row + L.rowsPer);
+    const sx = w.dx / res, sy = w.dy / res, tanE = w.tanE, omax = w.omax, maxT = L.maxT;
+    for (let j = w.row; j < end; j++) for (let i = 0; i < N; i++) {
+      let H = -1e9, T = 0, t = res;
+      while (t < maxT) {
+        if (omax - t * tanE < H) break; // nothing further can rise above what we already have
+        const si = Math.round(i + sx * t), sj = Math.round(j + sy * t);
+        if (si < 0 || sj < 0 || si >= N || sj >= N) break;
+        const v = occ[sj * N + si] - t * tanE;
+        if (v > H) { H = v; T = t; }
+        t += Math.max(res, t * 0.05);
+      }
+      w.H[j * N + i] = H; w.T[j * N + i] = T;
+    }
+    w.row = end;
+    if (end >= N) { L.cur = w; L.work = null; }
+  }
+  function updateShadows() {
+    for (const L of SHL) {
+      if (!L.work) {
+        const c = L.cur;
+        // start a fresh pass when the sun has moved or the player has walked toward the edge
+        const moved = !c || Math.hypot(cam.x - c.camx, cam.y - c.camy) > L.N * L.res * 0.12 || Math.abs(c.sunE - Lt.sunE) > 0.004 || Math.hypot(c.dx - Lt.sx / (Math.hypot(Lt.sx, Lt.sy) || 1), c.dy - Lt.sy / (Math.hypot(Lt.sx, Lt.sy) || 1)) > 0.01;
+        if (moved) shadowStart(L);
+      }
+      if (L.work) shadowRows(L);
+    }
+  }
+  function shadowAt(x, y, z) {
+    let lit = 1, inFine = false;
+    const F = SHL[0].cur;
+    if (F) {
+      const N = SHL[0].N, i = Math.round(x - F.x0), j = Math.round(y - F.y0);
+      if (i > 1 && j > 1 && i < N - 2 && j < N - 2) {
+        inFine = true;
+        const k = j * N + i, pen = 0.15 + F.T[k] * 0.022;
+        lit = clamp((z - F.H[k] + 0.3) / pen + 0.5, 0, 1);
+      }
+    }
+    const C = SHL[1].cur;
+    if (C) {
+      const N = SHL[1].N, i = Math.round((x - C.x0) / 5), j = Math.round((y - C.y0) / 5);
+      if (i > 0 && j > 0 && i < N - 1 && j < N - 1) {
+        const k = j * N + i, T = C.T[k];
+        if (!inFine || T > 70) lit = Math.min(lit, clamp((z - C.H[k] + 3) / (1.5 + T * 0.02) + 0.5, 0, 1));
+      }
+    }
+    return lit;
+  }
+
+  // ---- lighting: sun (or moon) with shadows, sky and ground ambient, point lights at night, then fog
   const lights = [];
-  function applyLights() {
+  function lightPass() {
     const night = V.night;
-    if (night < 0.08) return;
+    const up = clamp(Lt.sunE * 9, 0, 1), mu = clamp(-Lt.sunE * 5, 0, 1);
+    let sr = mix(1.0, 1.25, Lt.dusk) * up, sg = mix(0.95, 0.68, Lt.dusk) * up, sb = mix(0.84, 0.42, Lt.dusk) * up;
+    sr += 0.1 * mu; sg += 0.13 * mu; sb += 0.22 * mu;                 // moonlight
+    const dayA = mix(0.07, 1, smooth(-0.22, 0.12, Lt.sunE)); // the sky stays bright through sunset
+    const skr = 0.6 * dayA + Lt.dusk * 0.12, skg = 0.69 * dayA + Lt.dusk * 0.02, skb = 0.84 * dayA + 0.03;   // bluish light from the sky
+    const gr = 0.36 * dayA, gg = 0.32 * dayA, gb = 0.23 * dayA;                                              // warm bounce from the ground
+    const Lx = Lt.sx, Ly = Lt.sy, Lz = Lt.sz, hl = Math.hypot(Lx, Ly) || 1, Ldx = Lx / hl, Ldy = Ly / hl;
+    const EXPO = 0.72;
     lights.length = 0;
-    lights.push({ x: cam.x + Math.cos(cam.a) * 0.6, y: cam.y + Math.sin(cam.a) * 0.6, z: cam.z - 0.4, R: 13, I: 0.9, r: 255, g: 180, b: 110, flick: 0.04 });
-    for (const L of staticLights) if (Math.hypot(L.x - cam.x, L.y - cam.y) < 140) lights.push(L);
-    for (const n of npcs) if (n.torch && (n.guard || night > 0.35) && Math.hypot(n.x - cam.x, n.y - cam.y) < 140) lights.push({ x: n.x, y: n.y, z: n.z + 1.8, R: 10, I: 1, r: 255, g: 160, b: 80, flick: 0.2, k: n.id });
-    if (lights.length > 14) { lights.sort((a, b) => Math.hypot(a.x - cam.x, a.y - cam.y) - Math.hypot(b.x - cam.x, b.y - cam.y)); lights.length = 14; }
-    for (let i = 0; i < lights.length; i++) { const L = lights[i]; L.cur = L.I * night * (1 - L.flick + L.flick * Math.sin(clock * 13 + (L.k || i) * 3.7) * Math.sin(clock * 7.3 + i)); }
-    const { fx, fy, rx, ry, fCols, scaleY, horizon } = V;
-    const D = cellData, Z = cellDepth, E = cellEmit;
+    if (night > 0.08) {
+      lights.push({ x: cam.x + Math.cos(cam.a) * 0.6, y: cam.y + Math.sin(cam.a) * 0.6, z: cam.z - 0.4, R: 13, I: 0.9, r: 255, g: 180, b: 110, flick: 0.04 });
+      for (const L of staticLights) if (Math.hypot(L.x - cam.x, L.y - cam.y) < 140) lights.push(L);
+      for (const n of npcs) if (n.torch && (n.guard || night > 0.35) && Math.hypot(n.x - cam.x, n.y - cam.y) < 140) lights.push({ x: n.x, y: n.y, z: n.z + 1.8, R: 10, I: 1, r: 255, g: 160, b: 80, flick: 0.2, k: n.id });
+      if (lights.length > 14) { lights.sort((a, b) => Math.hypot(a.x - cam.x, a.y - cam.y) - Math.hypot(b.x - cam.x, b.y - cam.y)); lights.length = 14; }
+      for (let i = 0; i < lights.length; i++) { const L = lights[i]; L.cur = L.I * night * (1 - L.flick + L.flick * Math.sin(clock * 13 + (L.k || i) * 3.7) * Math.sin(clock * 7.3 + i)); }
+    }
+    const nL = lights.length;
+    const { fx, fy, rx, ry, fCols, scaleY, horizon, fogK } = V;
+    const D = cellData, Z = cellDepth, E = cellEmit, A = cellAlb, NR = cellNrm, OF = cellOff;
+    const sunOn = up + mu > 0.001;
     for (let r = 0; r < rows; r++) {
       const hgt = -(r + 0.5 - horizon) / scaleY;
       for (let c = 0; c < cols; c++) {
-        const idx = r * cols + c, z = Z[idx];
-        if (z > 160 || E[idx]) continue;
+        const idx = r * cols + c;
+        if (E[idx]) continue;
+        const z = Z[idx], q = idx * 3, p = idx * 4;
         const s = (c + 0.5 - cols / 2) / fCols;
         const wx = cam.x + (fx + rx * s) * z, wy = cam.y + (fy + ry * s) * z, wz = cam.z + hgt * z;
-        let ar = 0, ag = 0, ab = 0;
-        for (let i = 0; i < lights.length; i++) {
+        const nx = NR[q] / 127, ny = NR[q + 1] / 127, nz = NR[q + 2] / 127;
+        const hz = nz * 0.5 + 0.5;
+        let lr = gr + (skr - gr) * hz, lg = gg + (skg - gg) * hz, lb = gb + (skb - gb) * hz;
+        if (sunOn) {
+          const nd = nx * Lx + ny * Ly + nz * Lz, o = OF[idx];
+          if (nd > 0) {
+            const sh = nd * shadowAt(wx + Ldx * o, wy + Ldy * o, wz + 0.05);
+            lr += sr * sh; lg += sg * sh; lb += sb * sh;
+          } else if (o > 1) { // leaves seen against the sun glow a little: light passing through them
+            const sh = -nd * 0.4 * shadowAt(wx + Ldx * o, wy + Ldy * o, wz + 0.05);
+            lr += sr * sh * 0.85; lg += sg * sh; lb += sb * sh * 0.5;
+          }
+        }
+        for (let i = 0; i < nL; i++) {
           const L = lights[i];
           const dx = wx - L.x, dy = wy - L.y, dz = wz - L.z;
           const d2 = dx * dx + dy * dy + dz * dz;
           if (d2 > L.R * L.R) continue;
-          const f = (1 - Math.sqrt(d2) / L.R); const k = f * f * L.cur;
-          ar += L.r * k; ag += L.g * k; ab += L.b * k;
+          const f = 1 - Math.sqrt(d2) / L.R, k = f * f * L.cur * 0.85;
+          lr += L.r / 255 * k; lg += L.g / 255 * k; lb += L.b / 255 * k;
         }
-        if (ar + ag + ab < 1) continue;
-        const p = idx * 4;
-        const base = (D[p] + D[p + 1] + D[p + 2]) / 3 + 40;
-        D[p] += ar * base / 255 * 1.4; D[p + 1] += ag * base / 255 * 1.2; D[p + 2] += ab * base / 255;
+        const fog = 1 - Math.exp(-z * fogK);
+        D[p] = mix(A[q] * lr * EXPO, Lt.hr, fog);
+        D[p + 1] = mix(A[q + 1] * lg * EXPO, Lt.hg, fog);
+        D[p + 2] = mix(A[q + 2] * lb * EXPO, Lt.hb, fog);
       }
     }
   }
