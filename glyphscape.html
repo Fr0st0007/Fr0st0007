@@ -1,0 +1,601 @@
+<title>Glyphscape</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Major+Mono+Display&display=swap">
+<style>
+  /* Layout: full-bleed text-mode canvas; a thin HUD floats over it, brand top-left, keycap controls along the bottom. */
+  :root {
+    --void: #05070d;          /* letterbox / page ground */
+    --ink: #eef0f5;           /* HUD text */
+    --ink-dim: #a3abbd;       /* HUD secondary text */
+    --panel: rgba(6, 9, 18, 0.62);
+    --edge: rgba(238, 240, 245, 0.16);
+    --sun: #ffcf6e;           /* accent, borrowed from the in-world sun */
+    --font-display: "Major Mono Display", "IBM Plex Mono", ui-monospace, monospace;
+    --font-ui: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: var(--void); color: var(--ink); font-family: var(--font-ui); }
+  #view {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    display: block; touch-action: none; cursor: grab;
+  }
+  #view:active { cursor: grabbing; }
+  .hud {
+    position: fixed; left: 0; right: 0; pointer-events: none;
+    padding-inline: max(16px, env(safe-area-inset-left, 0px));
+  }
+  .hud > * { pointer-events: auto; }
+  .top { top: 0; padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+  .bottom {
+    bottom: 0; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end;
+  }
+  .brand {
+    display: inline-flex; flex-direction: column; gap: 4px;
+    background: var(--panel); border: 1px solid var(--edge);
+    padding: 10px 14px; border-radius: 4px; backdrop-filter: blur(6px);
+    max-width: 100%;
+  }
+  .brand h1 {
+    margin: 0; font-family: var(--font-display); font-weight: 400;
+    font-size: 22px; letter-spacing: 0.04em; line-height: 1.1;
+  }
+  .brand h1 span { color: var(--sun); }
+  .readout {
+    font-size: 12px; color: var(--ink-dim);
+    font-variant-numeric: tabular-nums; white-space: pre-wrap;
+  }
+  .readout b { color: var(--ink); font-weight: 600; }
+  button {
+    font: 600 12px/1 var(--font-ui); color: var(--ink);
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 4px;
+    padding: 9px 11px; cursor: pointer; backdrop-filter: blur(6px);
+    display: inline-flex; gap: 8px; align-items: center;
+  }
+  button:hover { border-color: var(--sun); }
+  button:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
+  button[aria-pressed="true"] { border-color: var(--sun); color: var(--sun); }
+  kbd {
+    font: 600 10px/1 var(--font-ui); color: var(--void); background: var(--ink-dim);
+    border-radius: 2px; padding: 3px 5px;
+  }
+  button[aria-pressed="true"] kbd { background: var(--sun); }
+  .hint {
+    font-size: 11px; color: var(--ink-dim); margin-left: auto;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 4px;
+    padding: 8px 10px; max-width: 100%;
+  }
+  @media (max-width: 640px) {
+    .hint { display: none; }
+    .brand h1 { font-size: 18px; }
+  }
+</style>
+
+<canvas id="view" aria-label="Procedurally generated landscape drawn with text characters"></canvas>
+
+<div class="hud top">
+  <div class="brand">
+    <h1>glyph<span>s</span>cape</h1>
+    <div class="readout" id="readout">generating world…</div>
+  </div>
+</div>
+
+<div class="hud bottom">
+  <button id="btnLetters" aria-pressed="false"><kbd>L</kbd>Show letters</button>
+  <button id="btnAuto" aria-pressed="true"><kbd>F</kbd>Autopilot</button>
+  <button id="btnNew"><kbd>R</kbd>New world</button>
+  <button id="btnTime"><kbd>T</kbd>Skip time</button>
+  <button id="btnLess" aria-label="Bigger characters"><kbd>−</kbd>Chunkier</button>
+  <button id="btnMore" aria-label="Smaller characters"><kbd>+</kbd>Finer</button>
+  <div class="hint">WASD / arrows move &amp; turn · Q/E or Space/C fly up/down · Shift boost · drag to look</div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- canvas & character grid ----------
+  const view = document.getElementById("view");
+  const ctx = view.getContext("2d");
+  const readout = document.getElementById("readout");
+
+  // Every glyph the world is allowed to be made of. Index 0 is "nothing drawn".
+  const GLYPHS = " .,'`\":;-~=+*^#%&@oO0≈▒";
+  const G = {};
+  [...GLYPHS].forEach((g, i) => (G[g] = i));
+  const SET = {
+    grass:  [",", "'", "\"", ";", ".", "`"].map(g => G[g]),
+    forest: ["&", "%", "@", "#", "&"].map(g => G[g]),
+    rock:   ["#", "=", "+", "^", "%"].map(g => G[g]),
+    snow:   ["*", ".", "'", "+", "`"].map(g => G[g]),
+    sand:   [".", ":", ",", "`", "."].map(g => G[g]),
+    water:  ["~", "-", "≈", "~", "=", "-"].map(g => G[g]),
+    cloud:  ["~", "-", "=", "~"].map(g => G[g]),
+    star:   [".", "+", "*", "."].map(g => G[g]),
+  };
+  const SUN_GLYPH = G["@"], MOON_GLYPH = G["O"];
+
+  const FONT_SIZES = [7, 8, 10, 12, 15, 19];
+  let detail = innerWidth < 640 ? 2 : 2;
+  let dpr = 1, W = 0, H = 0, cw = 6, chh = 10, cols = 0, rows = 0;
+  let atlas, bgCan, bgCtx, bgImg, fgCan, fgCtx, fgImg, glyphCan, glyphCtx;
+  let cellCol, cellGlyph;
+
+  function buildGrid() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.floor(innerWidth * dpr);
+    H = Math.floor(innerHeight * dpr);
+    view.width = W; view.height = H;
+
+    const fs = FONT_SIZES[detail] * dpr;
+    const font = `${fs}px "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace`;
+    ctx.font = font;
+    cw = Math.max(3, Math.ceil(ctx.measureText("M").width));
+    chh = Math.max(5, Math.ceil(fs * 1.18));
+    cols = Math.ceil(W / cw);
+    rows = Math.ceil(H / chh);
+
+    // Glyph atlas: each character in white, one cell wide.
+    atlas = document.createElement("canvas");
+    atlas.width = cw * GLYPHS.length; atlas.height = chh;
+    const a = atlas.getContext("2d");
+    a.font = font; a.fillStyle = "#fff"; a.textBaseline = "middle"; a.textAlign = "center";
+    [...GLYPHS].forEach((g, i) => { if (i) a.fillText(g, i * cw + cw / 2, chh / 2 + dpr * 0.5); });
+
+    // One pixel per cell for the background and glyph colours.
+    bgCan = document.createElement("canvas"); bgCan.width = cols; bgCan.height = rows;
+    fgCan = document.createElement("canvas"); fgCan.width = cols; fgCan.height = rows;
+    bgCtx = bgCan.getContext("2d"); fgCtx = fgCan.getContext("2d");
+    bgImg = bgCtx.createImageData(cols, rows);
+    fgImg = fgCtx.createImageData(cols, rows);
+    glyphCan = document.createElement("canvas");
+    glyphCan.width = cols * cw; glyphCan.height = rows * chh;
+    glyphCtx = glyphCan.getContext("2d");
+
+    cellCol = new Float32Array(cols * rows * 3);
+    cellGlyph = new Uint8Array(cols * rows);
+  }
+
+  // ---------- seeded noise ----------
+  let seed = 0, seedMix = 0;
+  function setSeed(s) { seed = s >>> 0; seedMix = Math.imul(seed ^ 0x5bd1e995, 0x9E3779B1) | 0; }
+
+  function hash2(x, y) {
+    let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + seedMix) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  }
+  function vnoise(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  // fbm with a rotation between octaves so the lattice never shows.
+  function fbm(x, y, oct) {
+    let sum = 0, amp = 0.5, norm = 0;
+    for (let i = 0; i < oct; i++) {
+      sum += amp * vnoise(x, y); norm += amp;
+      const nx = x * 1.6 - y * 1.2, ny = x * 1.2 + y * 1.6;
+      x = nx + 17.3; y = ny - 9.1; amp *= 0.5;
+    }
+    return sum / norm;
+  }
+  function ridged(x, y, oct) {
+    let sum = 0, amp = 0.5, norm = 0;
+    for (let i = 0; i < oct; i++) {
+      const n = 1 - Math.abs(vnoise(x, y) * 2 - 1);
+      sum += amp * n * n; norm += amp;
+      const nx = x * 1.7 - y * 1.1, ny = x * 1.1 + y * 1.7;
+      x = nx + 3.7; y = ny + 11.9; amp *= 0.5;
+    }
+    return sum / norm;
+  }
+  const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+
+  // ---------- terrain ----------
+  const WATER = 27;
+  function terrainH(x, y) {
+    const c = fbm(x * 0.0016, y * 0.0016, 5);
+    const r = ridged(x * 0.0042 + 31.7, y * 0.0042 - 12.3, 5);
+    const d = fbm(x * 0.021 + 5, y * 0.021 + 9, 3);
+    const mount = smooth(0.46, 0.74, c);
+    return (c * 1.3 - 0.2) * 70 + mount * r * 105 + (d - 0.5) * 7;
+  }
+
+  const K = { WATER: 0, SAND: 1, GRASS: 2, FOREST: 3, ROCK: 4, SNOW: 5 };
+  const CS = 128;
+  const chunks = new Map();
+
+  function genChunk(cx, cy) {
+    const x0 = cx * CS, y0 = cy * CS, N = CS + 1;
+    const hh = new Float32Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) hh[j * N + i] = terrainH(x0 + i - 1, y0 + j - 1);
+
+    const n = CS * CS;
+    const ch = { h: new Float32Array(n), col: new Uint8Array(n * 3), glyph: new Uint8Array(n), kind: new Uint8Array(n), x0, y0 };
+    for (let j = 0; j < CS; j++) {
+      for (let i = 0; i < CS; i++) {
+        const k = j * CS + i, wx = x0 + i, wy = y0 + j;
+        let h = hh[(j + 1) * N + i + 1];
+        const sx = h - hh[(j + 1) * N + i], sy = h - hh[j * N + i + 1];
+        const steep = Math.abs(sx) + Math.abs(sy);
+        let shade = clamp(1 + (sx + sy) * 0.075, 0.45, 1.4);
+        const m = fbm(wx * 0.0042 + 100, wy * 0.0042 - 50, 3);
+        const rnd = hash2(wx, wy), rnd2 = hash2(wy + 7, wx - 3);
+        let r, g, b, kind, set;
+
+        if (h < WATER) {
+          const depth = WATER - h;
+          const t = clamp(depth / 22, 0, 1);
+          r = 40 - 30 * t; g = 130 - 80 * t; b = 170 - 60 * t;
+          shade = 0.95 + rnd * 0.1; kind = K.WATER; set = SET.water; h = WATER;
+        } else if (h < WATER + 2.2) {
+          r = 214; g = 196; b = 140; kind = K.SAND; set = SET.sand;
+        } else if (h > 118 - m * 14 + (rnd - 0.5) * 6) {
+          r = 236; g = 240; b = 248; kind = K.SNOW; set = SET.snow;
+        } else if (h > 90 + m * 6 || steep > 3.4) {
+          const t = rnd * 0.15;
+          r = 120 + 30 * t; g = 112 + 25 * t; b = 104 + 20 * t; kind = K.ROCK; set = SET.rock;
+        } else if (m > 0.53 && h < 86) {
+          kind = K.FOREST; set = SET.forest;
+          if (rnd < 0.5) { // tree crowns stick up out of the canopy
+            h += 2.5 + rnd2 * 4.5;
+            shade = 0.75 + rnd2 * 0.5;
+            r = 30 + 20 * rnd2; g = 92 + 40 * rnd2; b = 40;
+          } else { r = 26; g = 70; b = 34; shade *= 0.8; }
+        } else {
+          const dry = clamp((0.53 - m) * 4, 0, 1);
+          r = 70 + 90 * dry; g = 150 - 10 * dry; b = 60 - 10 * dry;
+          kind = K.GRASS; set = SET.grass;
+        }
+        const v = 0.93 + rnd2 * 0.14;
+        ch.h[k] = h;
+        ch.col[k * 3] = clamp(r * shade * v, 0, 255);
+        ch.col[k * 3 + 1] = clamp(g * shade * v, 0, 255);
+        ch.col[k * 3 + 2] = clamp(b * shade * v, 0, 255);
+        ch.glyph[k] = set[(rnd * 997 | 0) % set.length];
+        ch.kind[k] = kind;
+      }
+    }
+    return ch;
+  }
+
+  function getChunk(cx, cy) {
+    const key = cx * 65536 + cy;
+    let ch = chunks.get(key);
+    if (!ch) { ch = genChunk(cx, cy); chunks.set(key, ch); }
+    return ch;
+  }
+  function pruneChunks() {
+    if (chunks.size < 260) return;
+    const pcx = Math.floor(cam.x / CS), pcy = Math.floor(cam.y / CS);
+    for (const [key, ch] of chunks) {
+      const cx = Math.floor(ch.x0 / CS), cy = Math.floor(ch.y0 / CS);
+      if (Math.abs(cx - pcx) > 7 || Math.abs(cy - pcy) > 7) chunks.delete(key);
+    }
+  }
+  function groundAt(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const ch = getChunk(Math.floor(xi / CS), Math.floor(yi / CS));
+    return ch.h[(yi - ch.y0) * CS + (xi - ch.x0)];
+  }
+
+  // ---------- camera & world state ----------
+  const cam = { x: 0, y: 0, z: 80, a: 0.6, pitch: 0 };
+  let tod = 0.34;           // time of day, 0..1 (0.5 = noon)
+  let autopilot = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let letters = 0, lettersTarget = 0;
+  let clock = 0;
+
+  function newWorld(s) {
+    setSeed(s ?? (Math.random() * 1e9) | 0);
+    chunks.clear();
+    // Start on the nearest coastline-ish spot we can find so the first view has land and sea.
+    let best = { x: 0, y: 0, score: -1 };
+    for (let i = 0; i < 60; i++) {
+      const x = (hash2(i, 1) - 0.5) * 4000, y = (hash2(1, i) - 0.5) * 4000;
+      const h = terrainH(x, y);
+      const score = h > WATER + 4 && h < 70 ? 1 / (1 + Math.abs(h - 45)) : 0;
+      if (score > best.score) best = { x, y, score };
+    }
+    cam.x = best.x; cam.y = best.y;
+    cam.z = groundAt(cam.x, cam.y) + 34;
+  }
+
+  // ---------- lighting ----------
+  const mix = (a, b, t) => a + (b - a) * t;
+  const L = { r: 1, g: 1, b: 1, zr: 0, zg: 0, zb: 0, hr: 0, hg: 0, hb: 0, sunE: 0, day: 1 };
+  function updateLight() {
+    const sunE = Math.sin((tod - 0.25) * Math.PI * 2);
+    const day = smooth(-0.18, 0.32, sunE);
+    const dusk = Math.exp(-Math.pow(sunE / 0.2, 2));
+    L.sunE = sunE; L.day = day;
+    L.r = mix(0.16, 1.0, day) + dusk * 0.32;
+    L.g = mix(0.2, 1.0, day) + dusk * 0.08;
+    L.b = mix(0.36, 1.0, day) - dusk * 0.12;
+    L.zr = mix(3, 52, day); L.zg = mix(5, 112, day); L.zb = mix(18, 205, day);
+    L.hr = mix(14, 168, day) + dusk * 95; L.hg = mix(18, 204, day) + dusk * 10; L.hb = mix(40, 236, day) - dusk * 70;
+  }
+
+  // ---------- renderer ----------
+  const MAXD = 760;
+  const FOV = 1.15;
+
+  function render() {
+    const tanHalf = Math.tan(FOV / 2);
+    const fx = Math.cos(cam.a), fy = Math.sin(cam.a);
+    const rx = -fy, ry = fx;
+    const fCols = (cols / 2) / tanHalf;
+    const scaleY = fCols * cw / chh;
+    const horizon = rows * 0.42 + cam.pitch * rows;
+    const waterTick = Math.floor(clock * 2.2);
+
+    // sun / moon screen positions
+    const sunAz = 0.9;
+    const bodyPos = (az, elev) => {
+      let d = az - cam.a; d = Math.atan2(Math.sin(d), Math.cos(d));
+      if (Math.abs(d) > 1.3 || elev < -0.1) return null;
+      return { c: cols / 2 + Math.tan(d) * fCols, r: horizon - Math.tan(Math.asin(clamp(elev, -1, 1))) * scaleY };
+    };
+    const sun = bodyPos(sunAz, L.sunE);
+    const moon = bodyPos(sunAz + Math.PI, -L.sunE);
+    const sunR = 2.6 * chh, moonR = 1.8 * chh;
+    const wind = clock * 0.03;
+
+    for (let i = 0; i < cols; i++) {
+      const t = ((i + 0.5) / cols) * 2 - 1;
+      const dx = fx + rx * t * tanHalf, dy = fy + ry * t * tanHalf;
+      let ybuf = rows, z = 1.2, dz = 0.4;
+      let lastCx = 1e9, lastCy = 1e9, ch = null;
+
+      while (z < MAXD && ybuf > 0) {
+        const wx = Math.floor(cam.x + dx * z), wy = Math.floor(cam.y + dy * z);
+        const cx = Math.floor(wx / CS), cy = Math.floor(wy / CS);
+        if (cx !== lastCx || cy !== lastCy) { ch = getChunk(cx, cy); lastCx = cx; lastCy = cy; }
+        const k = (wy - ch.y0) * CS + (wx - ch.x0);
+        const h = ch.h[k];
+        let sy = Math.floor((cam.z - h) * scaleY / z + horizon);
+        if (sy < ybuf) {
+          if (sy < 0) sy = 0;
+          const fog = Math.pow(z / MAXD, 1.35);
+          let r = ch.col[k * 3] * L.r, g = ch.col[k * 3 + 1] * L.g, b = ch.col[k * 3 + 2] * L.b;
+          let glyph = ch.glyph[k];
+          if (ch.kind[k] === K.WATER) {
+            glyph = SET.water[(glyph + waterTick + ((wx * 7 + wy * 13) >> 3)) % SET.water.length];
+            // a little sky in the water
+            r = mix(r, L.hr * 0.6, 0.25); g = mix(g, L.hg * 0.6, 0.25); b = mix(b, L.hb * 0.7, 0.25);
+          }
+          r = mix(r, L.hr, fog); g = mix(g, L.hg, fog); b = mix(b, L.hb, fog);
+          for (let rr = sy; rr < ybuf; rr++) {
+            const c = rr * cols + i;
+            cellCol[c * 3] = r; cellCol[c * 3 + 1] = g; cellCol[c * 3 + 2] = b;
+            cellGlyph[c] = fog > 0.85 ? 0 : glyph;
+          }
+          ybuf = sy;
+        }
+        z += dz;
+        dz = 0.4 + z * 0.011;
+      }
+
+      // Sky for whatever is left above the terrain in this column.
+      if (ybuf > 0) {
+        const colAng = cam.a + Math.atan(t * tanHalf);
+        const ca = Math.cos(colAng), sa = Math.sin(colAng);
+        for (let rr = 0; rr < ybuf; rr++) {
+          const c = rr * cols + i;
+          const e = Math.max(0, (horizon - rr) / scaleY);       // tan(elevation)
+          const tz = clamp(e * 1.5, 0, 1);
+          let r = mix(L.hr, L.zr, tz), g = mix(L.hg, L.zg, tz), b = mix(L.hb, L.zb, tz);
+          let glyph = 0;
+
+          // clouds on a flat ceiling
+          const inv = 1 / (e + 0.06);
+          const cn = fbm(ca * inv * 0.9 + wind, sa * inv * 0.9 - wind * 0.4, 4);
+          const amt = smooth(0.54, 0.74, cn) * smooth(0.02, 0.18, e);
+          if (amt > 0.02) {
+            const cl = mix(0.22, 1, L.day);
+            r = mix(r, 245 * cl + (L.hr - 168) * 0.3, amt * 0.85);
+            g = mix(g, 245 * cl, amt * 0.85);
+            b = mix(b, 250 * cl, amt * 0.85);
+            if (amt > 0.3) glyph = SET.cloud[(hash2(i >> 1, rr) * 4) | 0];
+          } else if (L.day < 0.5) {
+            // stars, pinned to the sky by direction
+            const sh = hash2(Math.floor(colAng * 160), Math.floor(e * 160));
+            if (sh > 0.985) {
+              const tw = 0.6 + 0.4 * Math.sin(clock * 3 + sh * 80);
+              const s = (1 - L.day * 2) * tw * 230;
+              r = Math.max(r, s); g = Math.max(g, s); b = Math.max(b, s * 1.05);
+              glyph = SET.star[(sh * 1000 | 0) % 4];
+            }
+          }
+          if (sun) {
+            const d = Math.hypot((i - sun.c) * cw, (rr - sun.r) * chh);
+            const glow = Math.exp(-d / (sunR * 3.5)) * 0.55 * (0.4 + L.day);
+            r += 255 * glow; g += 200 * glow; b += 120 * glow;
+            if (d < sunR) { r = 255; g = 236; b = 170; glyph = SUN_GLYPH; }
+          }
+          if (moon) {
+            const d = Math.hypot((i - moon.c) * cw, (rr - moon.r) * chh);
+            if (d < moonR) { const m = 1 - L.day; r = mix(r, 220, m); g = mix(g, 226, m); b = mix(b, 240, m); glyph = MOON_GLYPH; }
+          }
+          cellCol[c * 3] = r; cellCol[c * 3 + 1] = g; cellCol[c * 3 + 2] = b;
+          cellGlyph[c] = glyph;
+        }
+      }
+    }
+
+    // Compose: background colour per cell, then the glyph tinted in a brighter version of it.
+    // With letters hidden the two are close, so characters read as texture; revealed, the ground goes dark.
+    const bgK = mix(0.8, 0.07, letters), fgK = mix(1.22, 1.3 + (1 - L.day) * 1.4, letters), lift = mix(10, 30, letters);
+    const bd = bgImg.data, fd = fgImg.data, n = cols * rows;
+    for (let c = 0; c < n; c++) {
+      const r = cellCol[c * 3], g = cellCol[c * 3 + 1], b = cellCol[c * 3 + 2], p = c * 4;
+      bd[p] = r * bgK; bd[p + 1] = g * bgK; bd[p + 2] = b * bgK; bd[p + 3] = 255;
+      fd[p] = r * fgK + lift; fd[p + 1] = g * fgK + lift; fd[p + 2] = b * fgK + lift; fd[p + 3] = 255;
+    }
+    bgCtx.putImageData(bgImg, 0, 0);
+    fgCtx.putImageData(fgImg, 0, 0);
+
+    const gw = cols * cw, gh = rows * chh;
+    glyphCtx.globalCompositeOperation = "source-over";
+    glyphCtx.clearRect(0, 0, gw, gh);
+    for (let r = 0; r < rows; r++) {
+      const y = r * chh, base = r * cols;
+      for (let i = 0; i < cols; i++) {
+        const g = cellGlyph[base + i];
+        if (g) glyphCtx.drawImage(atlas, g * cw, 0, cw, chh, i * cw, y, cw, chh);
+      }
+    }
+    glyphCtx.globalCompositeOperation = "source-in";
+    glyphCtx.imageSmoothingEnabled = false;
+    glyphCtx.drawImage(fgCan, 0, 0, gw, gh);
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bgCan, 0, 0, gw, gh);
+    ctx.drawImage(glyphCan, 0, 0);
+  }
+
+  // ---------- input ----------
+  const keys = new Set();
+  const btnLetters = document.getElementById("btnLetters");
+  const btnAuto = document.getElementById("btnAuto");
+
+  function setAuto(on) { autopilot = on; btnAuto.setAttribute("aria-pressed", String(on)); }
+  function toggleLetters() {
+    lettersTarget = lettersTarget ? 0 : 1;
+    btnLetters.setAttribute("aria-pressed", String(!!lettersTarget));
+    btnLetters.lastChild.textContent = lettersTarget ? "Hide letters" : "Show letters";
+  }
+  function changeDetail(d) {
+    const nd = clamp(detail + d, 0, FONT_SIZES.length - 1);
+    if (nd !== detail) { detail = nd; buildGrid(); }
+  }
+  const MOVE_KEYS = new Set(["w", "a", "s", "d", "q", "e", " ", "c", "arrowup", "arrowdown", "arrowleft", "arrowright"]);
+
+  addEventListener("keydown", ev => {
+    if (ev.target.closest && ev.target.closest("button") && (ev.key === " " || ev.key === "Enter")) return;
+    const k = ev.key.toLowerCase();
+    if (MOVE_KEYS.has(k)) { keys.add(k); setAuto(false); ev.preventDefault(); }
+    else if (k === "shift") keys.add(k);
+    else if (k === "l") toggleLetters();
+    else if (k === "f") setAuto(!autopilot);
+    else if (k === "r") newWorld();
+    else if (k === "t") tod = (tod + 0.125) % 1;
+    else if (k === "-" || k === "_") changeDetail(1);
+    else if (k === "=" || k === "+") changeDetail(-1);
+  });
+  addEventListener("keyup", ev => keys.delete(ev.key.toLowerCase()));
+  addEventListener("blur", () => keys.clear());
+
+  document.getElementById("btnLetters").onclick = toggleLetters;
+  btnAuto.onclick = () => setAuto(!autopilot);
+  document.getElementById("btnNew").onclick = () => newWorld();
+  document.getElementById("btnTime").onclick = () => (tod = (tod + 0.125) % 1);
+  document.getElementById("btnLess").onclick = () => changeDetail(1);
+  document.getElementById("btnMore").onclick = () => changeDetail(-1);
+
+  // Drag to look. On touch, dragging up/down also flies forward/back.
+  let drag = null, touchFly = 0;
+  view.addEventListener("pointerdown", ev => {
+    drag = { x: ev.clientX, y: ev.clientY, sy: ev.clientY, touch: ev.pointerType === "touch" };
+    view.setPointerCapture(ev.pointerId);
+    setAuto(false);
+  });
+  view.addEventListener("pointermove", ev => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    drag.x = ev.clientX; drag.y = ev.clientY;
+    cam.a += dx * 0.005;
+    if (drag.touch) touchFly = clamp((drag.sy - ev.clientY) / 80, -1.5, 1.5);
+    else cam.pitch = clamp(cam.pitch + dy * 0.002, -0.35, 0.45);
+  });
+  const endDrag = () => { drag = null; touchFly = 0; };
+  view.addEventListener("pointerup", endDrag);
+  view.addEventListener("pointercancel", endDrag);
+  view.addEventListener("wheel", ev => { cam.z += ev.deltaY * -0.05; ev.preventDefault(); }, { passive: false });
+
+  // ---------- simulation ----------
+  function step(dt) {
+    clock += dt;
+    tod = (tod + dt / 240) % 1;      // a full day every four minutes
+    letters += (lettersTarget - letters) * Math.min(1, dt * 5);
+
+    const boost = keys.has("shift") ? 3 : 1;
+    let fwd = 0, turn = 0, lift = 0;
+    if (keys.has("w") || keys.has("arrowup")) fwd += 1;
+    if (keys.has("s") || keys.has("arrowdown")) fwd -= 1;
+    if (keys.has("a") || keys.has("arrowleft")) turn -= 1;
+    if (keys.has("d") || keys.has("arrowright")) turn += 1;
+    if (keys.has("e") || keys.has(" ")) lift += 1;
+    if (keys.has("q") || keys.has("c")) lift -= 1;
+    fwd += touchFly;
+
+    if (autopilot) {
+      fwd = 0.8;
+      turn = (vnoise(clock * 0.05, 3.3) - 0.5) * 1.1;
+      // look ahead and keep a comfortable height over whatever is coming
+      let ahead = 0;
+      for (const d of [0, 25, 60, 110]) ahead = Math.max(ahead, groundAt(cam.x + Math.cos(cam.a) * d, cam.y + Math.sin(cam.a) * d));
+      cam.z += (ahead + 26 - cam.z) * Math.min(1, dt * 0.8);
+      cam.pitch += (0 - cam.pitch) * Math.min(1, dt);
+    }
+
+    cam.a += turn * 1.4 * dt;
+    const speed = 32 * boost;
+    cam.x += Math.cos(cam.a) * fwd * speed * dt;
+    cam.y += Math.sin(cam.a) * fwd * speed * dt;
+    cam.z += lift * 40 * boost * dt;
+    cam.z = clamp(cam.z, groundAt(cam.x, cam.y) + 4, 420);
+  }
+
+  const COMPASS = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"];
+  function updateReadout() {
+    const ang = ((cam.a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const dir = COMPASS[Math.round(ang / (Math.PI / 4)) % 8];
+    const mins = Math.floor(tod * 24 * 60);
+    const hh = String(Math.floor(mins / 60)).padStart(2, "0"), mm = String(mins % 60).padStart(2, "0");
+    readout.innerHTML =
+      `seed <b>${seed}</b> · <b>${hh}:${mm}</b> · heading <b>${dir}</b>\n` +
+      `x <b>${Math.round(cam.x)}</b> y <b>${Math.round(cam.y)}</b> · alt <b>${Math.round(cam.z - WATER)}</b> m · ${cols}×${rows} chars`;
+  }
+
+  // ---------- boot ----------
+  let last = performance.now(), readoutTimer = 0;
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    step(dt);
+    updateLight();
+    render();
+    if ((readoutTimer -= dt) <= 0) { updateReadout(); readoutTimer = 0.25; pruneChunks(); }
+    requestAnimationFrame(frame);
+  }
+
+  function start(data) {
+    if (data && data.seed != null) {
+      setSeed(data.seed); Object.assign(cam, data.cam); tod = data.tod; detail = data.detail ?? detail;
+    } else {
+      newWorld();
+    }
+    buildGrid();
+    setAuto(autopilot);
+    requestAnimationFrame(frame);
+  }
+
+  window.claude?.hot?.snapshot?.(() => ({ seed, cam: { ...cam }, tod, detail }));
+  addEventListener("resize", buildGrid);
+
+  const boot = () => (window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {}));
+  // Wait for the monospace face so the glyph atlas uses it; fall back after a moment either way.
+  Promise.race([
+    document.fonts ? document.fonts.load('16px "IBM Plex Mono"') : Promise.resolve(),
+    new Promise(r => setTimeout(r, 1200)),
+  ]).then(boot, boot);
+})();
+</script>
